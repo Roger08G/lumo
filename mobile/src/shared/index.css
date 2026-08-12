@@ -1,0 +1,50 @@
+@font-face {
+    font-family: 'Rubik';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url(@public/fonts/rubik.ttf) format('truetype');
+}
+
+:root {
+    --font-family: 'Rubik', sans-serif;
+    --lumo-purple: #A583E1;
+    --lumo-cream: #fff9e9;
+}
+
+*,
+::before,
+::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    width: 100%;
+    height: 100vh;
+    font-family: var(--font-family);
+    background-color: var(--lumo-cream);
+}
+
+main {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    height: 100vh;
+}
+
+h1 {
+    color: var(--lumo-purple);
+    font-size: 1.8rem;
+    letter-spacing: 1px;
+}
+
+i {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: transparent;
+}

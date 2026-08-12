@@ -1,0 +1,25 @@
+{
+    "compilerOptions": {
+        "composite": true,
+        "skipLibCheck": true,
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "allowSyntheticDefaultImports": true,
+        "baseUrl": ".",
+        "paths": {
+            "@": ["src"],
+            "@/*": ["src/*"],
+            "@app": ["src/app"],
+            "@app/*": ["src/app/*"],
+            "@modules": ["src/modules"],
+            "@modules/*": ["src/modules/*"],
+            "@shared": ["src/shared"],
+            "@shared/*": ["src/shared/*"],
+            "@public": ["src/public"],
+            "@public/*": ["src/public/*"],
+            "@tauri": ["src-tauri"],
+            "@tauri/*": ["src-tauri/*"]
+        }
+    },
+    "include": ["vite.config.ts"]
+}
