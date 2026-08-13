@@ -8,7 +8,8 @@
         "build": "tsc && vite build",
         "preview": "vite preview",
         "tauri": "node scripts/tauri-env.mjs",
-        "fmt": "prettier --write --config .prettierrc --ignore-path .prettierignore .prettierrc \"**/*.{json,md,mjs,js,ts,tsx,jsx}\""
+        "fmt": "prettier --write --config .prettierrc --ignore-path .prettierignore .prettierrc \"**/*.{json,md,mjs,js,ts,tsx,jsx}\"",
+        "fmt:check": "prettier --check --config .prettierrc --ignore-path .prettierignore .prettierrc \"**/*.{json,md,mjs,js,ts,tsx,jsx}\""
     },
     "dependencies": {
         "@emotion/react": "^11.14.0",
