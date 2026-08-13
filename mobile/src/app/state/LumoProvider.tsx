@@ -433,6 +433,11 @@ function reducer(state: LumoState, action: LumoAction): LumoState {
                     place.id === action.payload.id ? action.payload : place,
                 ),
             };
+        case "DELETE_PLACE":
+            return {
+                ...state,
+                places: state.places.filter((place) => place.id !== action.payload.id),
+            };
         case "MARK_EVENTS_READ":
             return {
                 ...state,

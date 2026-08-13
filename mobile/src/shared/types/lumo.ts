@@ -124,6 +124,7 @@ export type LumoAction =
     | { type: "SET_DELAY"; payload: number }
     | { type: "ADD_PLACE"; payload: Place }
     | { type: "UPDATE_PLACE"; payload: Place }
+    | { type: "DELETE_PLACE"; payload: { id: string } }
     | { type: "MARK_EVENTS_READ" }
     | { type: "PURGE_OLD_EVENTS" }
     | { type: "RESET_DEMO" };

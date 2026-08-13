@@ -26,6 +26,8 @@ import {
     FiSliders,
     FiStar,
     FiSun,
+    FiTrash2,
+    FiUser,
     FiUserPlus,
     FiWifi,
 } from "react-icons/fi";
@@ -36,6 +38,7 @@ import {
     GroupSecurityModal,
     type GroupSecurityAction,
 } from "@modules/groups/components/GroupSecurityModal.tsx";
+import { ProtectedActionModal } from "@modules/groups/components/ProtectedActionModal.tsx";
 import { BottomNavigation, type ControllerTab } from "@shared/components/BottomNavigation.tsx";
 import { BrandMark } from "@shared/components/BrandMark.tsx";
 import { StepProgress } from "@shared/components/StepProgress.tsx";
@@ -51,6 +54,22 @@ const pulse = keyframes({
     "100%": { boxShadow: "0 0 0 0 rgba(104,66,166,0)" },
 });
 
+const routeFlow = keyframes({
+    from: { backgroundPositionX: "0" },
+    to: { backgroundPositionX: "24px" },
+});
+
+const routeTravel = keyframes({
+    "0%": { left: 2, opacity: 0, transform: "translateY(-50%) scale(.8)" },
+    "15%": { opacity: 1 },
+    "85%": { opacity: 1 },
+    "100%": {
+        left: "calc(100% - 18px)",
+        opacity: 0,
+        transform: "translateY(-50%) scale(1)",
+    },
+});
+
 const sectionTitle = css({
     color: "var(--lumo-text)",
     fontSize: 17,
@@ -60,6 +79,92 @@ const sectionTitle = css({
 interface ToastState {
     title: string;
     detail?: string;
+}
+
+type ControllerProtectedAction =
+    { kind: "change-mode" } | { kind: "delete-place"; place: Place } | null;
+
+function TripRoute({ from, to }: { from: string; to: string }) {
+    return (
+        <div
+            aria-label={`Trayecto desde ${from} hasta ${to}`}
+            css={css({
+                display: "grid",
+                gridTemplateColumns: "auto minmax(44px, 1fr) auto",
+                alignItems: "center",
+                gap: 8,
+                marginTop: 13,
+            })}
+        >
+            <strong
+                title={from}
+                css={css({
+                    overflow: "hidden",
+                    maxWidth: 96,
+                    color: "var(--lumo-text)",
+                    fontSize: 15,
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                })}
+            >
+                {from}
+            </strong>
+            <span
+                aria-hidden="true"
+                css={css({
+                    position: "relative",
+                    height: 26,
+                    display: "block",
+                    "&::before": {
+                        content: '""',
+                        position: "absolute",
+                        top: "50%",
+                        right: 5,
+                        left: 5,
+                        height: 2,
+                        borderRadius: 999,
+                        background:
+                            "repeating-linear-gradient(90deg, var(--lumo-accent) 0 7px, transparent 7px 12px)",
+                        animation: `${routeFlow} 1.15s linear infinite`,
+                    },
+                })}
+            >
+                <span
+                    css={css({
+                        position: "absolute",
+                        top: "50%",
+                        left: 2,
+                        zIndex: 1,
+                        width: 18,
+                        height: 18,
+                        display: "grid",
+                        placeItems: "center",
+                        borderRadius: 8,
+                        color: "#fff",
+                        background: "var(--lumo-primary)",
+                        boxShadow: "0 4px 10px rgba(104,66,166,.24)",
+                        animation: `${routeTravel} 2.4s ease-in-out infinite`,
+                    })}
+                >
+                    <FiUser size={12} />
+                </span>
+            </span>
+            <strong
+                title={to}
+                css={css({
+                    overflow: "hidden",
+                    maxWidth: 122,
+                    color: "var(--lumo-primary)",
+                    fontSize: 15,
+                    textAlign: "right",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                })}
+            >
+                {to}
+            </strong>
+        </div>
+    );
 }
 
 function StatusIcon({ warning }: { warning: boolean }) {
@@ -441,14 +546,13 @@ function HomeView({
                         <span css={css({ color: "var(--lumo-text-muted)", fontSize: 10 })}>
                             ÚLTIMO TRAYECTO
                         </span>
-                        <h3 css={sectionTitle}>
-                            {state.demo.lastTrip.from} → {state.demo.lastTrip.to}
-                        </h3>
+                        <h3 css={sectionTitle}>Ruta completada</h3>
                     </div>
                     <Pill>
                         <FiClock /> {state.demo.lastTrip.minutes} min
                     </Pill>
                 </div>
+                <TripRoute from={state.demo.lastTrip.from} to={state.demo.lastTrip.to} />
             </section>
 
             <section css={css(surface, { padding: "17px 17px 5px" })}>
@@ -644,10 +748,12 @@ function PlacesView({ onAdd, onEdit }: { onAdd: () => void; onEdit: (place: Plac
 function SettingsView({
     onToast,
     onInvite,
+    onChangeMode,
     onLeave,
 }: {
     onToast: (toast: ToastState) => void;
     onInvite: () => void;
+    onChangeMode: () => void;
     onLeave: () => void;
 }) {
     const { state, dispatch } = useLumo();
@@ -710,12 +816,7 @@ function SettingsView({
                         </span>
                     </div>
                 </div>
-                <Button
-                    variant="secondary"
-                    fullWidth
-                    icon={FiSettings}
-                    onClick={() => dispatch({ type: "SET_MODE", payload: null })}
-                >
+                <Button variant="secondary" fullWidth icon={FiSettings} onClick={onChangeMode}>
                     Elegir otro modo
                 </Button>
             </article>
@@ -769,11 +870,13 @@ function PlaceModal({
     place,
     onClose,
     onSaved,
+    onDelete,
 }: {
     open: boolean;
     place: Place | null;
     onClose: () => void;
     onSaved: (editing: boolean) => void;
+    onDelete: (place: Place) => void;
 }) {
     const { state, dispatch } = useLumo();
     const [step, setStep] = useState<0 | 1>(0);
@@ -1057,6 +1160,26 @@ function PlaceModal({
                         {step === 0 ? "Continuar" : editing ? "Guardar cambios" : "Crear lugar"}
                     </Button>
                 </div>
+                {place && (
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        fullWidth
+                        icon={FiTrash2}
+                        onClick={() => onDelete(place)}
+                        css={css({
+                            minHeight: 46,
+                            color: "var(--lumo-danger)",
+                            background: "var(--lumo-danger-soft)",
+                            "&:hover:not(:disabled)": {
+                                color: "#9f3849",
+                                background: "#f5dce1",
+                            },
+                        })}
+                    >
+                        Eliminar lugar
+                    </Button>
+                )}
             </form>
         </Modal>
     );
@@ -1069,6 +1192,7 @@ export function Controller() {
     const [notificationsOpen, setNotificationsOpen] = useState(false);
     const [placeOpen, setPlaceOpen] = useState(false);
     const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
+    const [protectedAction, setProtectedAction] = useState<ControllerProtectedAction>(null);
     const [securityAction, setSecurityAction] = useState<GroupSecurityAction | null>(null);
     const [toast, setToast] = useState<ToastState | null>(null);
     const unread = useMemo(
@@ -1101,6 +1225,13 @@ export function Controller() {
         setActiveTab(tab);
         window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
     };
+
+    const requestPlaceDeletion = (place: Place) => {
+        setPlaceOpen(false);
+        window.setTimeout(() => setProtectedAction({ kind: "delete-place", place }), 220);
+    };
+
+    const deletingPlace = protectedAction?.kind === "delete-place" ? protectedAction.place : null;
 
     return (
         <main
@@ -1181,6 +1312,7 @@ export function Controller() {
                     <SettingsView
                         onToast={setToast}
                         onInvite={() => setSecurityAction("invite")}
+                        onChangeMode={() => setProtectedAction({ kind: "change-mode" })}
                         onLeave={() => setSecurityAction("leave")}
                     />
                 )}
@@ -1228,6 +1360,33 @@ export function Controller() {
                             : "La zona ya aparece en tu lista",
                     })
                 }
+                onDelete={requestPlaceDeletion}
+            />
+
+            <ProtectedActionModal
+                open={Boolean(protectedAction)}
+                onClose={() => setProtectedAction(null)}
+                title={deletingPlace ? `Eliminar ${deletingPlace.name}` : "Elegir otro modo"}
+                description={
+                    deletingPlace
+                        ? "Este lugar dejará de aparecer en tus zonas habituales. Introduce el PIN para confirmar la eliminación."
+                        : "Introduce el PIN para cambiar la experiencia de este teléfono."
+                }
+                confirmLabel={deletingPlace ? "Eliminar lugar" : "Continuar al selector"}
+                icon={deletingPlace ? FiTrash2 : FiSliders}
+                variant={deletingPlace ? "danger" : "primary"}
+                onConfirm={() => {
+                    if (deletingPlace) {
+                        dispatch({ type: "DELETE_PLACE", payload: { id: deletingPlace.id } });
+                        setSelectedPlace(null);
+                        setToast({
+                            title: "Lugar eliminado",
+                            detail: `${deletingPlace.name} ya no aparece en tus zonas habituales`,
+                        });
+                        return;
+                    }
+                    dispatch({ type: "SET_MODE", payload: null });
+                }}
             />
 
             <GroupSecurityModal action={securityAction} onClose={() => setSecurityAction(null)} />
