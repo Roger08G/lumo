@@ -1,50 +1,123 @@
 @font-face {
-    font-family: 'Rubik';
+    font-family: "Rubik";
     font-style: normal;
-    font-weight: 500;
+    font-weight: 400 700;
     font-display: swap;
-    src: url(@public/fonts/rubik.ttf) format('truetype');
+    src: url("/fonts/rubik.ttf") format("truetype");
 }
 
 :root {
-    --font-family: 'Rubik', sans-serif;
-    --lumo-purple: #A583E1;
-    --lumo-cream: #fff9e9;
+    font-family: "Rubik", ui-rounded, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #2b2630;
+    background: #ede7f2;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+
+    --lumo-bg: #f8f5ef;
+    --lumo-surface: #ffffff;
+    --lumo-primary: #6842a6;
+    --lumo-primary-dark: #4d2c82;
+    --lumo-accent: #a583e1;
+    --lumo-lavender: #eee7f8;
+    --lumo-text: #2b2630;
+    --lumo-text-secondary: #6f6874;
+    --lumo-text-muted: #8d8692;
+    --lumo-border: #e5dfe7;
+    --lumo-border-strong: #d7cddd;
+    --lumo-success: #2d7659;
+    --lumo-success-soft: #e5f2ec;
+    --lumo-warning: #a85f1d;
+    --lumo-warning-soft: #fbefdf;
+    --lumo-danger: #b44758;
+    --lumo-danger-soft: #f9e8eb;
 }
 
 *,
-::before,
-::after {
+*::before,
+*::after {
     box-sizing: border-box;
-    margin: 0;
-    padding: 0;
+}
+
+html {
+    min-width: 320px;
+    min-height: 100%;
+    background: #ede7f2;
 }
 
 body {
+    min-width: 320px;
+    min-height: 100vh;
+    min-height: 100dvh;
+    margin: 0;
+    overflow-x: hidden;
+    background:
+        radial-gradient(circle at 16% 8%, rgba(165, 131, 225, 0.2), transparent 28rem),
+        #ede7f2;
+}
+
+body,
+button,
+input,
+select,
+textarea {
+    font-family: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+    -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+    outline: 3px solid rgba(104, 66, 166, 0.28);
+    outline-offset: 2px;
+}
+
+button,
+input,
+select {
+    font: inherit;
+}
+
+button {
+    margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+    margin: 0;
+}
+
+#root {
     width: 100%;
-    height: 100vh;
-    font-family: var(--font-family);
-    background-color: var(--lumo-cream);
+    min-height: 100vh;
+    min-height: 100dvh;
 }
 
-main {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    width: 100%;
-    height: 100vh;
+::selection {
+    color: #fff;
+    background: var(--lumo-primary);
 }
 
-h1 {
-    color: var(--lumo-purple);
-    font-size: 1.8rem;
-    letter-spacing: 1px;
-}
+@media (prefers-reduced-motion: reduce) {
 
-i {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    background-color: transparent;
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
 }
