@@ -1,10 +1,12 @@
 import { createContext, useContext, type Dispatch } from "react";
 
 import type { LumoAction, LumoState } from "@shared/types/lumo.ts";
+import type { LumoBackend } from "@shared/services/lumoBackend.ts";
 
 export interface LumoContextValue {
     state: LumoState;
     dispatch: Dispatch<LumoAction>;
+    backend: LumoBackend;
 }
 
 export const LumoContext = createContext<LumoContextValue | null>(null);

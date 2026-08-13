@@ -14,7 +14,7 @@ interface ProtectedActionModalProps {
     icon: IconType;
     variant?: ButtonVariant;
     onClose: () => void;
-    onConfirm: () => void;
+    onConfirm: (pin: string) => Promise<void> | void;
 }
 
 export function ProtectedActionModal({
@@ -27,25 +27,31 @@ export function ProtectedActionModal({
     onClose,
     onConfirm,
 }: ProtectedActionModalProps) {
-    const { state } = useLumo();
+    const { backend } = useLumo();
     const [pin, setPin] = useState("");
     const [error, setError] = useState("");
+    const [loading, setLoading] = useState(false);
 
     useEffect(() => {
         if (open) return;
         setPin("");
         setError("");
+        setLoading(false);
     }, [open]);
 
-    const submit = (event: FormEvent) => {
+    const submit = async (event: FormEvent) => {
         event.preventDefault();
-        if (pin !== state.group.pin) {
-            setError("El PIN del grupo no es correcto");
-            return;
+        setLoading(true);
+        try {
+            await backend.verifyPin(pin);
+            await onConfirm(pin);
+            onClose();
+        } catch (requestError) {
+            setError(
+                requestError instanceof Error ? requestError.message : "El PIN no es correcto",
+            );
+            setLoading(false);
         }
-
-        onClose();
-        window.setTimeout(onConfirm, 220);
     };
 
     return (
@@ -82,6 +88,7 @@ export function ProtectedActionModal({
                     icon={icon}
                     variant={variant}
                     disabled={pin.length !== 6}
+                    loading={loading}
                 >
                     {confirmLabel}
                 </Button>

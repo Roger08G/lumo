@@ -12,6 +12,7 @@ import {
 } from "react-icons/fi";
 
 import { GroupButtons } from "@modules/groups/components/GroupButtons.tsx";
+import { useLumo } from "@app/state/lumoContext.ts";
 import { BrandMark } from "@shared/components/BrandMark.tsx";
 import { StepProgress } from "@shared/components/StepProgress.tsx";
 import { Button, Field, Modal, Pill } from "@shared/components/ui.tsx";
@@ -30,7 +31,7 @@ const scan = keyframes({
 });
 
 interface GroupAccessProps {
-    onEnter: (payload: GroupEntryPayload) => void;
+    onEnter: (payload: GroupEntryPayload) => Promise<void> | void;
 }
 
 interface PreviewInvite {
@@ -40,7 +41,7 @@ interface PreviewInvite {
     code: string;
     supervisorName?: string;
     trackedPersonName?: string;
-    pin?: string;
+    token?: string;
 }
 
 type GroupAction = "create" | "join" | null;
@@ -67,14 +68,16 @@ function readPreviewInvite(): PreviewInvite {
     return {
         version: 1,
         kind: "lumo-group-invite",
-        name: "Familia Lumo",
+        name: "Grupo familiar",
         code: "LUMO24",
         supervisorName: "Supervisor",
-        trackedPersonName: "Abuelo",
+        trackedPersonName: "Persona acompañada",
+        token: "preview-invitation",
     };
 }
 
 export default function GroupAccess({ onEnter }: GroupAccessProps) {
+    const { backend } = useLumo();
     const [action, setAction] = useState<GroupAction>(null);
     const [createStep, setCreateStep] = useState<CreateStep>(0);
     const [joinStep, setJoinStep] = useState<JoinStep>("scan");
@@ -146,17 +149,25 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
             }
 
             setLoading(true);
-            await new Promise((resolve) => window.setTimeout(resolve, 500));
-            onEnter({
-                name: groupName.trim(),
-                code: `LUMO${Math.floor(10 + Math.random() * 90)}`,
-                pin: groupPin,
-                userName: userName.trim(),
-                supervisorName: userName.trim(),
-                trackedPersonName: trackedPersonName.trim(),
-                role: "supervisor",
-                entry: "created",
-            });
+            try {
+                await onEnter({
+                    name: groupName.trim(),
+                    code: "",
+                    pin: groupPin,
+                    userName: userName.trim(),
+                    supervisorName: userName.trim(),
+                    trackedPersonName: trackedPersonName.trim(),
+                    role: "supervisor",
+                    entry: "created",
+                });
+            } catch (requestError) {
+                setError(
+                    requestError instanceof Error
+                        ? requestError.message
+                        : "No se ha podido crear el grupo",
+                );
+                setLoading(false);
+            }
             return;
         }
 
@@ -168,33 +179,47 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
             setError("Introduce las 6 cifras del PIN");
             return;
         }
-        if (scannedInvite.pin && scannedInvite.pin !== groupPin) {
-            setError("El PIN no coincide con la invitación");
-            return;
-        }
-
         setLoading(true);
-        await new Promise((resolve) => window.setTimeout(resolve, 500));
-        onEnter({
-            name: scannedInvite.name,
-            code: scannedInvite.code,
-            pin: groupPin,
-            userName: scannedInvite.trackedPersonName || "Miembro",
-            supervisorName: scannedInvite.supervisorName || "Supervisor",
-            trackedPersonName: scannedInvite.trackedPersonName || "Persona acompañada",
-            role: "member",
-            entry: "joined",
-        });
+        try {
+            await onEnter({
+                name: scannedInvite.name,
+                code: scannedInvite.code,
+                pin: groupPin,
+                userName: scannedInvite.trackedPersonName || "Miembro",
+                supervisorName: scannedInvite.supervisorName || "Supervisor",
+                trackedPersonName: scannedInvite.trackedPersonName || "Persona acompañada",
+                role: "member",
+                entry: "joined",
+                inviteToken: scannedInvite.token,
+            });
+        } catch (requestError) {
+            setError(
+                requestError instanceof Error
+                    ? requestError.message
+                    : "No se ha podido unir al grupo",
+            );
+            setLoading(false);
+        }
     };
 
     const simulateScan = async () => {
         if (loading) return;
         setLoading(true);
         setError("");
-        await new Promise((resolve) => window.setTimeout(resolve, 850));
-        setScannedInvite(readPreviewInvite());
-        setJoinStep("pin");
-        setLoading(false);
+        try {
+            const scanned = await backend.scanInvitation();
+            if (!scanned) await new Promise((resolve) => window.setTimeout(resolve, 850));
+            setScannedInvite((scanned as PreviewInvite | null) ?? readPreviewInvite());
+            setJoinStep("pin");
+        } catch (requestError) {
+            setError(
+                requestError instanceof Error
+                    ? requestError.message
+                    : "No se ha podido leer el código QR",
+            );
+        } finally {
+            setLoading(false);
+        }
     };
 
     const createTitle = [
@@ -285,7 +310,7 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                             key="group-name"
                             autoFocus
                             label="Nombre del grupo"
-                            placeholder="Familia Gómez"
+                            placeholder="Nombre del grupo"
                             icon={FiUsers}
                             value={groupName}
                             onChange={(event) => {
@@ -299,7 +324,7 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                             key="user-name"
                             autoFocus
                             label="Tu nombre"
-                            placeholder="Roger"
+                            placeholder="Tu nombre"
                             icon={FiUser}
                             value={userName}
                             onChange={(event) => {
@@ -313,7 +338,7 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                             key="tracked-person-name"
                             autoFocus
                             label="Nombre de la persona acompañada"
-                            placeholder="Manuel"
+                            placeholder="Nombre de la persona"
                             icon={FiHeart}
                             value={trackedPersonName}
                             onChange={(event) => {
@@ -463,8 +488,20 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                         >
                             Apunta al QR que muestra el supervisor del grupo.
                         </p>
+                        {error && (
+                            <p
+                                role="alert"
+                                css={css({ color: "var(--lumo-danger)", fontSize: 12 })}
+                            >
+                                {error}
+                            </p>
+                        )}
                         <Button fullWidth icon={FiCamera} loading={loading} onClick={simulateScan}>
-                            {loading ? "Leyendo código…" : "Simular escaneo válido"}
+                            {loading
+                                ? "Leyendo código…"
+                                : backend.isMobileNative()
+                                  ? "Escanear código QR"
+                                  : "Simular escaneo válido"}
                         </Button>
                     </div>
                 ) : (

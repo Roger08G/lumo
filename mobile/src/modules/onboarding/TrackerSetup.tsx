@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { css } from "@emotion/react";
 import {
     FiBatteryCharging,
@@ -43,7 +44,9 @@ const PERMISSIONS: PermissionItem[] = [
 ];
 
 export function TrackerSetup() {
-    const { state, dispatch } = useLumo();
+    const { state, dispatch, backend } = useLumo();
+    const [activating, setActivating] = useState(false);
+    const [error, setError] = useState("");
     const consents = state.preferences.trackerConsents;
     const ready = Object.values(consents).every(Boolean);
 
@@ -216,15 +219,39 @@ export function TrackerSetup() {
                 })}
             >
                 <FiInfo size={16} css={css({ flex: "0 0 auto", marginTop: 1 })} />
-                Esta pantalla solo simula los permisos. Android los solicitará desde el sistema en
-                una versión real.
+                Android puede mostrar sus propios avisos para confirmar estos permisos.
             </aside>
+
+            {error && (
+                <p role="alert" css={css({ color: "var(--lumo-danger)", fontSize: 12 })}>
+                    {error}
+                </p>
+            )}
 
             <Button
                 fullWidth
                 icon={FiShield}
                 disabled={!ready}
-                onClick={() => dispatch({ type: "COMPLETE_TRACKER_SETUP" })}
+                loading={activating}
+                onClick={async () => {
+                    setActivating(true);
+                    setError("");
+                    try {
+                        const snapshot = await backend.completeTracking();
+                        dispatch(
+                            snapshot
+                                ? { type: "HYDRATE_BACKEND", payload: snapshot }
+                                : { type: "COMPLETE_TRACKER_SETUP" },
+                        );
+                    } catch (requestError) {
+                        setError(
+                            requestError instanceof Error
+                                ? requestError.message
+                                : "No se ha podido activar el seguimiento",
+                        );
+                        setActivating(false);
+                    }
+                }}
                 css={css({ marginTop: "auto" })}
             >
                 {ready ? "Activar protección" : "Completa los tres pasos"}

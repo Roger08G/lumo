@@ -252,7 +252,7 @@ export function ModeSelection({ onSelect }: ModeSelectionProps) {
                 })}
             >
                 <FiArrowRight size={17} aria-hidden="true" />
-                Esta elección solo cambia la interfaz de la demo.
+                Esta elección cambia la vista utilizada en este teléfono.
             </aside>
             <GroupSecurityModal action={securityAction} onClose={() => setSecurityAction(null)} />
         </main>

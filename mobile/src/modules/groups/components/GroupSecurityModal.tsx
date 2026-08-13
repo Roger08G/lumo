@@ -5,6 +5,7 @@ import { QRCodeSVG } from "qrcode.react";
 
 import { useLumo } from "@app/state/lumoContext.ts";
 import { Button, Field, Modal, Pill } from "@shared/components/ui.tsx";
+import type { InvitationData } from "@shared/services/lumoBackend.ts";
 
 export type GroupSecurityAction = "invite" | "leave";
 
@@ -14,11 +15,13 @@ interface GroupSecurityModalProps {
 }
 
 export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps) {
-    const { state, dispatch } = useLumo();
+    const { state, dispatch, backend } = useLumo();
     const [pin, setPin] = useState("");
     const [error, setError] = useState("");
     const [verified, setVerified] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [invitation, setInvitation] = useState<InvitationData | null>(null);
 
     useEffect(() => {
         if (action) return;
@@ -26,52 +29,73 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
         setError("");
         setVerified(false);
         setCopied(false);
+        setLoading(false);
+        setInvitation(null);
     }, [action]);
 
     const close = () => {
         onClose();
     };
 
-    const verify = (event: FormEvent) => {
+    const verify = async (event: FormEvent) => {
         event.preventDefault();
         if (!/^\d{6}$/.test(pin)) {
             setError("Introduce las 6 cifras del PIN");
             return;
         }
-        if (pin !== state.group.pin) {
-            setError("El PIN no es correcto");
-            return;
-        }
-
-        if (action === "leave") {
-            close();
-            window.setTimeout(() => dispatch({ type: "LEAVE_GROUP", payload: { pin } }), 220);
-            return;
-        }
-
         try {
-            localStorage.setItem(
-                "lumo.preview-invite",
-                JSON.stringify({
-                    version: 1,
-                    kind: "lumo-group-invite",
-                    name: state.group.name,
-                    code: state.group.code,
-                    supervisorName: state.group.supervisorName,
-                    trackedPersonName: state.group.trackedPersonName,
-                    pin: state.group.pin,
-                }),
+            setLoading(true);
+            await backend.verifyPin(pin);
+            if (action === "leave") {
+                await backend.leaveGroup(pin);
+                close();
+                window.setTimeout(() => dispatch({ type: "LEAVE_GROUP" }), 220);
+                return;
+            }
+
+            const created = await backend.createInvitation(pin);
+            const invite =
+                created ??
+                ({
+                    invitationId: "preview",
+                    token: "preview-invitation",
+                    groupName: state.group.name,
+                    groupCode: state.group.code,
+                    expiresAtMs: Date.now() + 15 * 60_000,
+                } satisfies InvitationData);
+            setInvitation(invite);
+            try {
+                localStorage.setItem(
+                    "lumo.preview-invite",
+                    JSON.stringify({
+                        version: 1,
+                        kind: "lumo-group-invite",
+                        name: state.group.name,
+                        code: state.group.code,
+                        supervisorName: state.group.supervisorName,
+                        trackedPersonName: state.group.trackedPersonName,
+                        token: invite.token,
+                    }),
+                );
+            } catch {
+                // The real QR is still usable when browser preview storage is unavailable.
+            }
+            setVerified(true);
+            setError("");
+        } catch (requestError) {
+            setError(
+                requestError instanceof Error
+                    ? requestError.message
+                    : "No se ha podido completar la acción",
             );
-        } catch {
-            // The QR remains available even when local preview state cannot be cached.
+        } finally {
+            setLoading(false);
         }
-        setVerified(true);
-        setError("");
     };
 
     const copyPin = async () => {
         try {
-            await navigator.clipboard.writeText(state.group.pin);
+            await navigator.clipboard.writeText(pin);
             setCopied(true);
             setError("");
         } catch {
@@ -123,6 +147,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                                     code: state.group.code,
                                     supervisorName: state.group.supervisorName,
                                     trackedPersonName: state.group.trackedPersonName,
+                                    token: invitation?.token,
                                 })}
                                 size={166}
                                 level="M"
@@ -168,7 +193,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                             textAlign: "center",
                         })}
                     >
-                        {state.group.pin}
+                        {pin}
                     </div>
                     <Button fullWidth icon={copied ? FiCheck : FiCopy} onClick={copyPin}>
                         {copied ? "PIN copiado" : "Copiar PIN"}
@@ -222,6 +247,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                         disabled={pin.length !== 6}
                         variant={isInvite ? "primary" : "danger"}
                         icon={isInvite ? FiUserPlus : FiLogOut}
+                        loading={loading}
                     >
                         {isInvite ? "Ver invitación" : "Salir del grupo"}
                     </Button>
