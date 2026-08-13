@@ -16,7 +16,8 @@ scripts/           Verificación reproducible del backend
 
 El workspace funciona sin red mediante SQLite cifrado y queda preparado para usar el mismo dominio
 contra `lumo-api` por HTTPS. La configuración y los límites actuales están documentados en
-[`docs/backend-local.md`](docs/backend-local.md).
+[`docs/backend-local.md`](docs/backend-local.md). El procedimiento de servidor está en
+[`docs/deploy.md`](docs/deploy.md).
 
 ## Desarrollo
 
