@@ -2,7 +2,7 @@
 
 ## Requisitos
 
-- Servidor Linux con Docker Engine y Docker Compose v2.
+- Servidor Linux con Bash, OpenSSL, Docker Engine y Docker Compose v2.
 - Un dominio que resuelva a la IP del servidor.
 - Reloj del servidor sincronizado mediante NTP. La autenticación rechaza peticiones con más de
   cinco minutos de desfase.
@@ -47,12 +47,21 @@ El proceso se ejecuta con UID `10001`, por lo que necesita permiso de lectura so
 
 ## Primer despliegue
 
+Prepara `.env` y el directorio de certificados sin arrancar servicios:
+
 ```bash
-docker compose config --quiet
-docker compose build --pull
-docker compose up -d
-docker compose ps
+./scripts/deploy.sh --prepare-only
 ```
+
+Instala el certificado como se indica arriba y ejecuta el despliegue:
+
+```bash
+./scripts/deploy.sh
+```
+
+El script valida el secreto, Docker Compose, la caducidad del certificado, la correspondencia entre
+certificado y clave, los permisos de lectura, construye la imagen y espera hasta 60 segundos a que
+el contenedor esté saludable.
 
 Comprueba el endpoint TLS desde otra máquina:
 

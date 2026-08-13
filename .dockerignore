@@ -3,6 +3,8 @@
 .lumo-data
 .env
 certs/
+.ci-certs/
+backups/
 **/node_modules
 **/dist
 **/target

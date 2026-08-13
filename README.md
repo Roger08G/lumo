@@ -36,6 +36,10 @@ Backend Rust:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-local-backend.ps1
 ```
 
+```bash
+./scripts/verify-local-backend.sh
+```
+
 El script ejecuta formato, tipos, Clippy, pruebas, builds y los `self-test` de `lumo-controller`,
 `lumo-controlled` y `lumo-debug`.
 
