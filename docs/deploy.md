@@ -45,6 +45,20 @@ sudo install -o 10001 -g root -m 0400 /ruta/privkey.pem certs/privkey.pem
 
 El proceso se ejecuta con UID `10001`, por lo que necesita permiso de lectura sobre ambos archivos.
 
+### Proxy inverso en Docker
+
+Si Nginx se ejecuta en Docker, usa la red externa del proxy y no publiques el puerto de la API en
+el host:
+
+```dotenv
+COMPOSE_FILE=docker-compose.yml:docker-compose.proxy.yml
+LUMO_PROXY_NETWORK=nombre_de_la_red_nginx
+```
+
+El overlay `docker-compose.proxy.yml` elimina los puertos publicados, limita memoria, CPU, procesos
+y logs, monta el sistema de archivos como sólo lectura y conserva escritura únicamente en `/data`.
+Nginx puede resolver el upstream como `https://lumo-api:8443` dentro de la red compartida.
+
 ## Primer despliegue
 
 Prepara `.env` y el directorio de certificados sin arrancar servicios:
@@ -140,6 +154,10 @@ git rev-parse HEAD > "backups/$timestamp/git-revision.txt"
 
 Verifica periódicamente la restauración en una instancia aislada. La copia de SQLite no sustituye
 el secreto: sin el mismo `LUMO_API_PASSWORD`, los clientes no pueden descifrar el estado.
+
+El servidor conserva un único estado cifrado con límites de tamaño; los eventos visibles se filtran
+a 24 horas y se limitan a 200. SQLite hace checkpoints automáticos y limita el journal a 16 MiB. El
+overlay de proxy rota los logs de Docker a tres archivos de 10 MiB.
 
 ## Rotación del secreto
 

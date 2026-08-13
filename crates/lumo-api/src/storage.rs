@@ -32,6 +32,8 @@ impl ApiStore {
         connection
             .execute_batch(
                 "PRAGMA journal_mode = WAL;
+                 PRAGMA journal_size_limit = 16777216;
+                 PRAGMA wal_autocheckpoint = 256;
                  CREATE TABLE IF NOT EXISTS remote_state (
                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                     revision INTEGER NOT NULL,
