@@ -756,7 +756,7 @@ function SettingsView({
     onChangeMode: () => void;
     onLeave: () => void;
 }) {
-    const { state, dispatch } = useLumo();
+    const { state, dispatch, backend } = useLumo();
 
     return (
         <section css={css({ display: "grid", gap: 16 })}>
@@ -773,24 +773,59 @@ function SettingsView({
             <article css={css(surface, { display: "grid", padding: "5px 16px" })}>
                 <Toggle
                     label="Avisos familiares"
-                    description="Mostrar avisos dentro de esta demostración"
+                    description="Recibir llegadas, salidas y avisos de ayuda"
                     checked={state.preferences.notifications}
-                    onChange={(checked) => {
-                        dispatch({ type: "SET_NOTIFICATIONS", payload: checked });
-                        onToast({ title: checked ? "Avisos activados" : "Avisos pausados" });
+                    onChange={async (checked) => {
+                        try {
+                            if (!checked) {
+                                await backend.configureMobileTracking("controller", false);
+                                dispatch({ type: "SET_NOTIFICATIONS", payload: false });
+                                onToast({ title: "Avisos pausados" });
+                                return;
+                            }
+                            const status = await backend.requestMobilePermissions("controller");
+                            if (status) {
+                                dispatch({ type: "SYNC_MOBILE_STATUS", payload: status });
+                            }
+                            if (status && status.notifications !== "granted") {
+                                dispatch({ type: "SET_NOTIFICATIONS", payload: false });
+                                onToast({
+                                    title: "Permiso pendiente",
+                                    detail: "Activa las notificaciones en los ajustes de Android",
+                                });
+                                return;
+                            }
+                            const trackingStatus = await backend.configureMobileTracking(
+                                "controller",
+                                true,
+                            );
+                            if (trackingStatus) {
+                                dispatch({
+                                    type: "SYNC_MOBILE_STATUS",
+                                    payload: trackingStatus,
+                                });
+                            }
+                            dispatch({ type: "SET_NOTIFICATIONS", payload: true });
+                            onToast({ title: "Avisos activados" });
+                        } catch (requestError) {
+                            dispatch({ type: "SET_NOTIFICATIONS", payload: false });
+                            onToast({
+                                title: "No se han podido activar",
+                                detail:
+                                    requestError instanceof Error
+                                        ? requestError.message
+                                        : "Revisa los ajustes de Android",
+                            });
+                        }
                     }}
                 />
                 <div css={css({ height: 1, background: "var(--lumo-border)" })} />
                 <Toggle
                     label="Conexión del tracker"
-                    description="Estado simulado del teléfono acompañado"
+                    description="Estado comunicado por el teléfono acompañado"
                     checked={state.demo.connection === "online"}
-                    onChange={(checked) =>
-                        dispatch({
-                            type: "SET_CONNECTION",
-                            payload: checked ? "online" : "offline",
-                        })
-                    }
+                    disabled
+                    onChange={() => undefined}
                 />
             </article>
 
@@ -1252,6 +1287,31 @@ export function Controller() {
         );
     };
 
+    const callTrackedPerson = async () => {
+        try {
+            const opened = await backend.openPhoneDialer(state.group.trackedPersonPhone);
+            setToast(
+                opened
+                    ? {
+                          title: "Llamada preparada",
+                          detail: `Confirma la llamada a ${state.group.trackedPersonName}`,
+                      }
+                    : {
+                          title: "Llamadas disponibles en Android",
+                          detail: "La APK abrirá el marcador del teléfono",
+                      },
+            );
+        } catch (requestError) {
+            setToast({
+                title: "No se ha podido preparar la llamada",
+                detail:
+                    requestError instanceof Error
+                        ? requestError.message
+                        : "Revisa el número configurado",
+            });
+        }
+    };
+
     const openNotifications = async () => {
         setNotificationsOpen(true);
         try {
@@ -1331,12 +1391,7 @@ export function Controller() {
                     <HomeView
                         locating={locating}
                         onLocate={locate}
-                        onCall={() =>
-                            setToast({
-                                title: "Llamada preparada",
-                                detail: "En la app real se abriría el teléfono. Esta acción es una demo.",
-                            })
-                        }
+                        onCall={() => void callTrackedPerson()}
                         onShowActivity={() => changeTab("activity")}
                     />
                 )}

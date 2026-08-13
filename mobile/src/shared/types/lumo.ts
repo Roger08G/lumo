@@ -26,7 +26,9 @@ export interface GroupState {
     code: string;
     userName: string;
     supervisorName: string;
+    supervisorPhone: string;
     trackedPersonName: string;
+    trackedPersonPhone: string;
     role: GroupRole | null;
     entry: "created" | "joined" | null;
 }
@@ -81,6 +83,20 @@ export interface PreferencesState {
     };
 }
 
+export type MobileRole = "controller" | "controlled";
+
+export interface MobileRuntimeStatus {
+    platform: "android";
+    trackingEnabled: boolean;
+    role: MobileRole | null;
+    preciseLocation: "granted" | "denied";
+    backgroundLocation: "granted" | "denied" | "notRequired";
+    notifications: "granted" | "denied";
+    batteryOptimizationDisabled: boolean;
+    batteryPercent: number;
+    locationServicesEnabled: boolean;
+}
+
 export interface LumoState {
     group: GroupState;
     mode: AppMode | null;
@@ -88,6 +104,7 @@ export interface LumoState {
     places: Place[];
     events: TimelineEvent[];
     preferences: PreferencesState;
+    mobile: MobileRuntimeStatus | null;
 }
 
 export interface GroupEntryPayload {
@@ -96,7 +113,9 @@ export interface GroupEntryPayload {
     pin: string;
     userName: string;
     supervisorName: string;
+    supervisorPhone: string;
     trackedPersonName: string;
+    trackedPersonPhone: string;
     role: GroupRole;
     entry: "created" | "joined";
     inviteToken?: string;
@@ -125,6 +144,7 @@ export type LumoAction =
       }
     | { type: "COMPLETE_TRACKER_SETUP" }
     | { type: "SET_NOTIFICATIONS"; payload: boolean }
+    | { type: "SYNC_MOBILE_STATUS"; payload: MobileRuntimeStatus }
     | { type: "FINISH_LOCATE" }
     | { type: "APPLY_SCENARIO"; payload: DebugScenario }
     | { type: "SET_BATTERY"; payload: number }

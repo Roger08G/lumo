@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, type ReactNode } from "react";
+import { useEffect, useMemo, useReducer, useRef, type ReactNode } from "react";
 
 import { LumoContext } from "@app/state/lumoContext.ts";
 import { lumoBackend } from "@shared/services/lumoBackend.ts";
@@ -30,7 +30,9 @@ const EMPTY_GROUP: GroupState = {
     code: "",
     userName: "",
     supervisorName: "",
+    supervisorPhone: "",
     trackedPersonName: "",
+    trackedPersonPhone: "",
     role: null,
     entry: null,
 };
@@ -154,6 +156,7 @@ function createInitialState(): LumoState {
         places: DEFAULT_PLACES,
         events: createDefaultEvents(),
         preferences: DEFAULT_PREFERENCES,
+        mobile: null,
     };
 
     if (typeof window === "undefined") return fallback;
@@ -186,7 +189,9 @@ function createInitialState(): LumoState {
                       (storedGroup.entry === "joined"
                           ? "Supervisor"
                           : storedGroup.userName || "Supervisor"),
+                  supervisorPhone: storedGroup.supervisorPhone || "",
                   trackedPersonName: storedGroup.trackedPersonName || "Persona acompañada",
+                  trackedPersonPhone: storedGroup.trackedPersonPhone || "",
                   role:
                       storedGroup.role ||
                       (storedGroup.entry === "joined" ? "member" : "supervisor"),
@@ -229,6 +234,7 @@ function createInitialState(): LumoState {
         })),
         events: recentEvents(readStored(localStorage, STORAGE_KEYS.events, fallback.events)),
         preferences: readStored(localStorage, STORAGE_KEYS.preferences, fallback.preferences),
+        mobile: null,
     };
 }
 
@@ -401,6 +407,12 @@ function reducer(state: LumoState, action: LumoAction): LumoState {
                         ? {
                               ...action.payload.group,
                               userName: state.group.userName,
+                              supervisorPhone:
+                                  action.payload.group.supervisorPhone ||
+                                  state.group.supervisorPhone,
+                              trackedPersonPhone:
+                                  action.payload.group.trackedPersonPhone ||
+                                  state.group.trackedPersonPhone,
                               role: state.group.role,
                               entry: state.group.entry,
                           }
@@ -437,6 +449,37 @@ function reducer(state: LumoState, action: LumoAction): LumoState {
                 ...state,
                 preferences: { ...state.preferences, notifications: action.payload },
             };
+        case "SYNC_MOBILE_STATUS": {
+            const isControlledDevice =
+                action.payload.role === "controlled" || state.mode === "tracker";
+            return {
+                ...state,
+                demo: isControlledDevice
+                    ? {
+                          ...state.demo,
+                          battery: action.payload.batteryPercent,
+                          permission:
+                              action.payload.preciseLocation === "granted" ? "granted" : "revoked",
+                      }
+                    : state.demo,
+                preferences: isControlledDevice
+                    ? {
+                          ...state.preferences,
+                          trackerSetupComplete:
+                              state.preferences.trackerSetupComplete ||
+                              action.payload.trackingEnabled,
+                          trackerConsents: {
+                              preciseLocation: action.payload.preciseLocation === "granted",
+                              backgroundLocation:
+                                  action.payload.backgroundLocation === "granted" ||
+                                  action.payload.backgroundLocation === "notRequired",
+                              batteryProtection: action.payload.batteryOptimizationDisabled,
+                          },
+                      }
+                    : state.preferences,
+                mobile: action.payload,
+            };
+        }
         case "FINISH_LOCATE": {
             const demo = { ...state.demo, lastUpdatedAt: new Date().toISOString() };
             return withEvent(
@@ -496,6 +539,8 @@ function reducer(state: LumoState, action: LumoAction): LumoState {
 
 export function LumoProvider({ children }: { children: ReactNode }) {
     const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
+    const notifiedEventIds = useRef<Set<string> | null>(null);
+    const requestedControllerPermissions = useRef(false);
 
     useEffect(() => {
         writeStored(localStorage, STORAGE_KEYS.schema, 8);
@@ -546,6 +591,105 @@ export function LumoProvider({ children }: { children: ReactNode }) {
             window.clearInterval(interval);
         };
     }, [state.group.active, state.mode]);
+
+    useEffect(() => {
+        if (!lumoBackend.isMobileNative()) return;
+        let active = true;
+        const synchronize = async () => {
+            try {
+                const status = await lumoBackend.getMobileStatus();
+                if (active && status) dispatch({ type: "SYNC_MOBILE_STATUS", payload: status });
+            } catch {
+                // Android settings can be temporarily unavailable while another activity is open.
+            }
+        };
+        const onVisible = () => {
+            if (document.visibilityState === "visible") void synchronize();
+        };
+        void synchronize();
+        const interval = window.setInterval(synchronize, 15_000);
+        document.addEventListener("visibilitychange", onVisible);
+        window.addEventListener("focus", synchronize);
+        return () => {
+            active = false;
+            window.clearInterval(interval);
+            document.removeEventListener("visibilitychange", onVisible);
+            window.removeEventListener("focus", synchronize);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (state.mode !== "controller") {
+            requestedControllerPermissions.current = false;
+        }
+        if (
+            !state.group.active ||
+            state.mode !== "controller" ||
+            !lumoBackend.isMobileNative() ||
+            requestedControllerPermissions.current
+        ) {
+            return;
+        }
+        requestedControllerPermissions.current = true;
+        void lumoBackend
+            .requestMobilePermissions("controller")
+            .then(async (permissionStatus) => {
+                const status = state.preferences.notifications
+                    ? await lumoBackend.configureMobileTracking("controller", true)
+                    : permissionStatus;
+                if (status) dispatch({ type: "SYNC_MOBILE_STATUS", payload: status });
+            })
+            .catch(() => undefined);
+    }, [state.group.active, state.mode, state.preferences.notifications]);
+
+    useEffect(() => {
+        if (
+            !lumoBackend.isMobileNative() ||
+            state.mode === "controller" ||
+            state.mode === "tracker"
+        ) {
+            return;
+        }
+        void lumoBackend
+            .getMobileStatus()
+            .then((status) => {
+                if (status?.trackingEnabled && status.role) {
+                    return lumoBackend.configureMobileTracking(status.role, false);
+                }
+                return null;
+            })
+            .catch(() => undefined);
+    }, [state.mode]);
+
+    useEffect(() => {
+        if (
+            state.mode !== "controller" ||
+            !state.preferences.notifications ||
+            !lumoBackend.isMobileNative()
+        ) {
+            notifiedEventIds.current = new Set(state.events.map((event) => event.id));
+            return;
+        }
+        const known = notifiedEventIds.current;
+        if (!known) {
+            notifiedEventIds.current = new Set(state.events.map((event) => event.id));
+            return;
+        }
+        const now = Date.now();
+        const fresh = state.events.filter(
+            (event) =>
+                !event.read &&
+                !known.has(event.id) &&
+                now - new Date(event.at).getTime() <= 2 * 60_000,
+        );
+        state.events.forEach((event) => known.add(event.id));
+        fresh.forEach((event) => {
+            void lumoBackend.showNotification(event.title, event.detail, {
+                id: event.id,
+                urgent: event.kind === "warning",
+            });
+        });
+    }, [state.events, state.mode, state.preferences.notifications]);
 
     const value = useMemo(() => ({ state, dispatch, backend: lumoBackend }), [state]);
 

@@ -5,6 +5,8 @@ import type {
     BackendHydration,
     DebugScenario,
     GroupEntryPayload,
+    MobileRole,
+    MobileRuntimeStatus,
     Place,
 } from "@shared/types/lumo.ts";
 
@@ -15,7 +17,9 @@ interface BackendSession {
     groupName: string;
     groupCode: string;
     supervisorName: string;
+    supervisorPhone: string;
     trackedPersonName: string;
+    trackedPersonPhone: string;
     role: "supervisor" | "member";
 }
 
@@ -155,6 +159,10 @@ function hydrate(snapshot: BackendSnapshot): BackendHydration {
               : "controller"
         : null;
     const lastSeenAt = snapshot.controlled.lastSeenAtMs;
+    const connection =
+        lastSeenAt && Date.now() - lastSeenAt > 2 * 60_000
+            ? "offline"
+            : snapshot.controlled.connectivity;
     const location = activePlace
         ? activePlace.kind === "home"
             ? "home"
@@ -181,7 +189,9 @@ function hydrate(snapshot: BackendSnapshot): BackendHydration {
                           ? snapshot.session.trackedPersonName
                           : snapshot.session.supervisorName,
                   supervisorName: snapshot.session.supervisorName,
+                  supervisorPhone: snapshot.session.supervisorPhone ?? "",
                   trackedPersonName: snapshot.session.trackedPersonName,
+                  trackedPersonPhone: snapshot.session.trackedPersonPhone ?? "",
                   role,
                   entry: role === "member" ? "joined" : "created",
               }
@@ -191,7 +201,9 @@ function hydrate(snapshot: BackendSnapshot): BackendHydration {
                   code: "",
                   userName: "",
                   supervisorName: "",
+                  supervisorPhone: "",
                   trackedPersonName: "",
+                  trackedPersonPhone: "",
                   role: null,
                   entry: null,
               },
@@ -207,7 +219,7 @@ function hydrate(snapshot: BackendSnapshot): BackendHydration {
             sinceLabel: elapsedLabel(lastSeenAt),
             lastUpdatedAt: new Date(lastSeenAt ?? Date.now()).toISOString(),
             battery: snapshot.controlled.batteryPercent,
-            connection: snapshot.controlled.connectivity,
+            connection,
             permission: snapshot.controlled.precisePermission === "granted" ? "granted" : "revoked",
             accuracy: accuracy <= 25 ? "high" : accuracy <= 100 ? "balanced" : "low",
             delaySeconds: lastSeenAt
@@ -278,6 +290,17 @@ async function nativeInvoke<T>(command: string, args?: Record<string, unknown>):
     }
 }
 
+function normalizedPhone(number: string) {
+    const normalized = number
+        .trim()
+        .replace(/(?!^)\+/g, "")
+        .replace(/[^\d+]/g, "");
+    if (!/^\+?[0-9]{7,15}$/.test(normalized)) {
+        throw new Error("No hay un número de teléfono válido configurado");
+    }
+    return normalized;
+}
+
 export const lumoBackend = {
     isNative,
     isMobileNative,
@@ -335,7 +358,9 @@ export const lumoBackend = {
             input: {
                 name: payload.name,
                 supervisorName: payload.supervisorName,
+                supervisorPhone: payload.supervisorPhone,
                 trackedPersonName: payload.trackedPersonName,
+                trackedPersonPhone: payload.trackedPersonPhone,
                 pin: payload.pin,
             },
         });
@@ -361,6 +386,12 @@ export const lumoBackend = {
     },
 
     async leaveGroup(pin: string) {
+        if (isMobileNative()) {
+            const status = await this.getMobileStatus();
+            if (status?.trackingEnabled && status.role) {
+                await this.configureMobileTracking(status.role, false);
+            }
+        }
         await nativeInvoke("group_leave", { pin });
     },
 
@@ -378,16 +409,110 @@ export const lumoBackend = {
     },
 
     async completeTracking() {
-        await ensureLocationPermission();
-        const snapshot = await nativeInvoke<BackendSnapshot>("tracker_set_tracking", {
+        const result = await this.setControlledTracking(true);
+        return result.snapshot;
+    },
+
+    async setControlledTracking(enabled: boolean) {
+        let mobileStatus: MobileRuntimeStatus | null = null;
+        if (isMobileNative()) {
+            mobileStatus = enabled
+                ? await this.requestMobilePermissions("controlled")
+                : await this.getMobileStatus();
+            if (
+                enabled &&
+                (!mobileStatus ||
+                    mobileStatus.preciseLocation !== "granted" ||
+                    mobileStatus.backgroundLocation === "denied" ||
+                    !mobileStatus.locationServicesEnabled)
+            ) {
+                throw new Error("Completa los permisos de ubicación de Android para continuar");
+            }
+        } else if (enabled) {
+            await ensureLocationPermission();
+        }
+
+        const backendSnapshot = await nativeInvoke<BackendSnapshot>("tracker_set_tracking", {
             input: {
-                precisePermission: "granted",
-                backgroundPermission: "granted",
-                batteryOptimizationDisabled: true,
-                enabled: true,
+                precisePermission:
+                    mobileStatus?.preciseLocation === "denied" ? "revoked" : "granted",
+                backgroundPermission:
+                    mobileStatus?.backgroundLocation === "denied" ? "revoked" : "granted",
+                batteryOptimizationDisabled: mobileStatus?.batteryOptimizationDisabled ?? true,
+                enabled,
             },
         });
-        return snapshot ? hydrate(snapshot) : null;
+
+        try {
+            if (isMobileNative()) {
+                mobileStatus = await this.configureMobileTracking("controlled", enabled);
+            }
+        } catch (error) {
+            if (enabled) {
+                await nativeInvoke<BackendSnapshot>("tracker_set_tracking", {
+                    input: {
+                        precisePermission: "granted",
+                        backgroundPermission: "granted",
+                        batteryOptimizationDisabled:
+                            mobileStatus?.batteryOptimizationDisabled ?? false,
+                        enabled: false,
+                    },
+                }).catch(() => undefined);
+            }
+            throw error;
+        }
+
+        return {
+            status: mobileStatus,
+            snapshot: backendSnapshot ? hydrate(backendSnapshot) : null,
+        };
+    },
+
+    async getMobileStatus() {
+        if (!isMobileNative()) return null;
+        return nativeInvoke<MobileRuntimeStatus>("mobile_get_status");
+    },
+
+    async requestMobilePermissions(role: MobileRole) {
+        if (!isMobileNative()) return null;
+        return nativeInvoke<MobileRuntimeStatus>("mobile_request_permissions", { role });
+    },
+
+    async configureMobileTracking(role: MobileRole, enabled: boolean) {
+        if (!isMobileNative()) return null;
+        return nativeInvoke<MobileRuntimeStatus>("mobile_configure_tracking", {
+            role,
+            enabled,
+            intervalSeconds: 30,
+        });
+    },
+
+    async openBatterySettings() {
+        if (!isMobileNative()) return false;
+        await nativeInvoke("mobile_open_battery_settings");
+        return true;
+    },
+
+    async openPhoneDialer(number: string) {
+        const phone = normalizedPhone(number);
+        if (!isNative()) return false;
+        await nativeInvoke("mobile_open_phone_dialer", { number: phone });
+        return true;
+    },
+
+    async showNotification(
+        title: string,
+        body: string,
+        options: { id?: string; urgent?: boolean } = {},
+    ) {
+        if (!isMobileNative()) return false;
+        await nativeInvoke("mobile_show_notification", {
+            id: options.id,
+            title,
+            body,
+            urgent: options.urgent ?? false,
+        });
+        return true;
     },
 
     async requestLocation() {

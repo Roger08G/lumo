@@ -50,6 +50,30 @@ export function TrackerSetup() {
     const consents = state.preferences.trackerConsents;
     const ready = Object.values(consents).every(Boolean);
 
+    const requestPermission = async (key: PermissionItem["key"]) => {
+        setError("");
+        if (!backend.isMobileNative()) {
+            dispatch({
+                type: "SET_TRACKER_CONSENT",
+                payload: { key, value: !consents[key] },
+            });
+            return;
+        }
+        try {
+            const status = await backend.requestMobilePermissions("controlled");
+            if (status) dispatch({ type: "SYNC_MOBILE_STATUS", payload: status });
+            if (key === "batteryProtection" && !status?.batteryOptimizationDisabled) {
+                await backend.openBatterySettings();
+            }
+        } catch (requestError) {
+            setError(
+                requestError instanceof Error
+                    ? requestError.message
+                    : "No se ha podido solicitar el permiso",
+            );
+        }
+    };
+
     return (
         <main
             css={css({
@@ -167,12 +191,7 @@ export function TrackerSetup() {
                             <button
                                 type="button"
                                 aria-label={`${active ? "Desactivar" : "Activar"} ${permission.title}`}
-                                onClick={() =>
-                                    dispatch({
-                                        type: "SET_TRACKER_CONSENT",
-                                        payload: { key: permission.key, value: !active },
-                                    })
-                                }
+                                onClick={() => void requestPermission(permission.key)}
                                 css={css({
                                     minWidth: 45,
                                     minHeight: 44,
@@ -238,6 +257,8 @@ export function TrackerSetup() {
                     setError("");
                     try {
                         const snapshot = await backend.completeTracking();
+                        const status = await backend.getMobileStatus();
+                        if (status) dispatch({ type: "SYNC_MOBILE_STATUS", payload: status });
                         dispatch(
                             snapshot
                                 ? { type: "HYDRATE_BACKEND", payload: snapshot }
@@ -249,6 +270,7 @@ export function TrackerSetup() {
                                 ? requestError.message
                                 : "No se ha podido activar el seguimiento",
                         );
+                    } finally {
                         setActivating(false);
                     }
                 }}
