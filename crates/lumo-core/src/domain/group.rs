@@ -14,7 +14,11 @@ pub struct Group {
     pub name: String,
     pub code: String,
     pub supervisor_name: String,
+    #[serde(default)]
+    pub supervisor_phone: String,
     pub tracked_person_name: String,
+    #[serde(default)]
+    pub tracked_person_phone: String,
     pub(crate) pin_hash: String,
     pub created_at_ms: i64,
 }

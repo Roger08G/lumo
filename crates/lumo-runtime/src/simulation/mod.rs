@@ -64,7 +64,9 @@ pub fn seed_demo(
         CreateGroupInput {
             name: "Grupo familiar".into(),
             supervisor_name: "Supervisor".into(),
+            supervisor_phone: "+34600000001".into(),
             tracked_person_name: "Persona acompañada".into(),
+            tracked_person_phone: "+34600000002".into(),
             pin: pin.into(),
         },
         now_ms,

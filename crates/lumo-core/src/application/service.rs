@@ -24,7 +24,9 @@ const PIN_LOCK_MS: i64 = 5 * 60 * 1_000;
 pub struct CreateGroupInput {
     pub name: String,
     pub supervisor_name: String,
+    pub supervisor_phone: String,
     pub tracked_person_name: String,
+    pub tracked_person_phone: String,
     pub pin: String,
 }
 
@@ -97,16 +99,23 @@ impl LumoService {
         }
         let name = required_text("group name", &input.name)?;
         let supervisor_name = required_text("supervisor name", &input.supervisor_name)?;
+        let supervisor_phone = validated_phone("supervisor phone", &input.supervisor_phone)?;
         let tracked_person_name = required_text("tracked person name", &input.tracked_person_name)?;
+        let tracked_person_phone =
+            validated_phone("tracked person phone", &input.tracked_person_phone)?;
         validate_pin(&input.pin)?;
 
+        let current_revision = state.revision;
         *state = RuntimeState::default();
+        state.revision = current_revision;
         state.group = Some(Group {
             id: Uuid::new_v4().to_string(),
             name,
             code: random_group_code(),
             supervisor_name,
+            supervisor_phone,
             tracked_person_name,
+            tracked_person_phone,
             pin_hash: hash_pin(&input.pin)?,
             created_at_ms: now_ms,
         });
@@ -184,7 +193,10 @@ impl LumoService {
 
     pub fn leave_group(&self, state: &mut RuntimeState, pin: &str, now_ms: i64) -> LumoResult<()> {
         self.verify_protected_action(state, pin, now_ms)?;
+        let current_revision = state.revision;
         *state = RuntimeState::default();
+        state.revision = current_revision;
+        bump_revision(state);
         Ok(())
     }
 
@@ -337,17 +349,22 @@ impl LumoService {
         now_ms: i64,
     ) -> LumoResult<()> {
         ensure_group(state)?;
+        if state.controlled.connectivity == connectivity {
+            return Ok(());
+        }
         state.controlled.connectivity = connectivity;
-        state.controlled.last_seen_at_ms = Some(now_ms);
-        if connectivity == Connectivity::Offline {
-            add_event(
-                state,
-                EventKind::Warning,
-                "Conexión interrumpida",
-                "El teléfono controlado está sin conexión",
-                None,
-                now_ms,
-            );
+        match connectivity {
+            Connectivity::Online => state.controlled.last_seen_at_ms = Some(now_ms),
+            Connectivity::Offline => {
+                add_event(
+                    state,
+                    EventKind::Warning,
+                    "Conexión interrumpida",
+                    "El teléfono controlado está sin conexión",
+                    None,
+                    now_ms,
+                );
+            }
         }
         bump_revision(state);
         Ok(())
@@ -505,7 +522,10 @@ impl LumoService {
     }
 
     pub fn reset(&self, state: &mut RuntimeState) {
+        let current_revision = state.revision;
         *state = RuntimeState::default();
+        state.revision = current_revision;
+        bump_revision(state);
     }
 }
 
@@ -520,6 +540,23 @@ fn required_text(label: &str, value: &str) -> LumoResult<String> {
     } else {
         Err(LumoError::InvalidInput(format!(
             "{label} must contain between 2 and 80 characters"
+        )))
+    }
+}
+
+fn validated_phone(label: &str, value: &str) -> LumoResult<String> {
+    let value = value.trim();
+    let digits = value.chars().filter(char::is_ascii_digit).count();
+    let valid_characters = value.chars().all(|character| {
+        character.is_ascii_digit() || matches!(character, '+' | ' ' | '-' | '(' | ')')
+    });
+    let plus_is_valid = value.chars().filter(|character| *character == '+').count()
+        == usize::from(value.starts_with('+'));
+    if valid_characters && plus_is_valid && (7..=15).contains(&digits) {
+        Ok(value.to_owned())
+    } else {
+        Err(LumoError::InvalidInput(format!(
+            "{label} must contain a valid phone number"
         )))
     }
 }
@@ -644,7 +681,9 @@ mod tests {
         CreateGroupInput {
             name: "Grupo familiar".into(),
             supervisor_name: "Supervisor".into(),
+            supervisor_phone: "+34600000001".into(),
             tracked_person_name: "Persona acompañada".into(),
+            tracked_person_phone: "+34600000002".into(),
             pin: "123456".into(),
         }
     }
@@ -771,5 +810,80 @@ mod tests {
             .expect("group");
         let snapshot = service.snapshot(&mut state, RuntimeProfile::Controller, EVENT_TTL_MS + 1);
         assert!(snapshot.events.is_empty());
+    }
+
+    #[test]
+    fn group_rejects_invalid_contact_numbers() {
+        let service = LumoService;
+        let mut state = RuntimeState::default();
+        let mut input = group_input();
+        input.supervisor_phone = "123".into();
+        assert!(matches!(
+            service.create_group(&mut state, input, 1),
+            Err(LumoError::InvalidInput(_))
+        ));
+
+        let mut input = group_input();
+        input.tracked_person_phone = "+34+600000002".into();
+        assert!(matches!(
+            service.create_group(&mut state, input, 1),
+            Err(LumoError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn repeated_offline_detection_creates_only_one_warning() {
+        let service = LumoService;
+        let mut state = RuntimeState::default();
+        service
+            .create_group(&mut state, group_input(), 1)
+            .expect("group");
+        service
+            .set_connectivity(&mut state, Connectivity::Online, 2)
+            .expect("online");
+        service
+            .set_connectivity(&mut state, Connectivity::Offline, 3)
+            .expect("offline");
+        service
+            .set_connectivity(&mut state, Connectivity::Offline, 4)
+            .expect("same offline state");
+        assert_eq!(
+            state
+                .events
+                .iter()
+                .filter(|event| event.title == "Conexión interrumpida")
+                .count(),
+            1
+        );
+        assert_eq!(state.controlled.last_seen_at_ms, Some(2));
+    }
+
+    #[test]
+    fn recreate_reset_and_leave_keep_revisions_monotonic() {
+        let service = LumoService;
+        let mut state = RuntimeState {
+            revision: 41,
+            ..RuntimeState::default()
+        };
+
+        service
+            .create_group(&mut state, group_input(), 1)
+            .expect("group");
+        assert_eq!(state.revision, 42);
+
+        service.reset(&mut state);
+        assert_eq!(state.revision, 43);
+        assert!(state.group.is_none());
+
+        service
+            .create_group(&mut state, group_input(), 2)
+            .expect("group after reset");
+        assert_eq!(state.revision, 44);
+
+        service
+            .leave_group(&mut state, "123456", 3)
+            .expect("leave group");
+        assert_eq!(state.revision, 45);
+        assert!(state.group.is_none());
     }
 }
