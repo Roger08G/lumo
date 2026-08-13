@@ -67,6 +67,10 @@ sin privilegios. La clave privada montada debe ser legible por el UID `10001` de
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-local-backend.ps1
 ```
 
+```bash
+./scripts/verify-local-backend.sh
+```
+
 El script ejecuta formato, tipos, Clippy sin advertencias, todas las pruebas, compila el workspace,
 genera la API y los tres binarios en modo release, y lanza sus pruebas autónomas. Los ejecutables quedan en
 `C:\.android\lumo-target\release`.
