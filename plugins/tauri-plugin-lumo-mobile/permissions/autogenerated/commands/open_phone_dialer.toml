@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-open-phone-dialer"
+description = "Enables the open_phone_dialer command without any pre-configured scope."
+commands.allow = ["open_phone_dialer"]
+
+[[permission]]
+identifier = "deny-open-phone-dialer"
+description = "Denies the open_phone_dialer command without any pre-configured scope."
+commands.deny = ["open_phone_dialer"]

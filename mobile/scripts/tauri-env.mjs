@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const env = { ...process.env };
@@ -14,8 +14,21 @@ if (process.platform === "win32") {
     env.GRADLE_USER_HOME = "C:\\.android\\gradle";
     env.ANDROID_HOME = "C:\\.android\\sdk";
     env.ANDROID_SDK_ROOT = "C:\\.android\\sdk";
+    env.ANDROID_AVD_HOME = "C:\\.android\\avd";
     env.NDK_HOME = "C:\\.android\\sdk\\ndk\\29.0.13846066";
     env.JAVA_HOME = "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.20.8-hotspot";
+    env.CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER =
+        "C:\\.android\\sdk\\ndk\\29.0.13846066\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\aarch64-linux-android24-clang.cmd";
+    env.CC_AARCH64_LINUX_ANDROID = env.CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER;
+    env.AR_AARCH64_LINUX_ANDROID =
+        "C:\\.android\\sdk\\ndk\\29.0.13846066\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\llvm-ar.exe";
+    const gradleProperties = resolve("src-tauri/gen/android/gradle.properties");
+    if (
+        existsSync(gradleProperties) &&
+        !/^android\.overridePathCheck\s*=\s*true\s*$/m.test(readFileSync(gradleProperties, "utf8"))
+    ) {
+        appendFileSync(gradleProperties, "\nandroid.overridePathCheck=true\n", "utf8");
+    }
 }
 
 const cli = resolve("node_modules/.bin/tauri.exe");
