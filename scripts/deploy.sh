@@ -94,6 +94,8 @@ certificate="$certificates_dir/fullchain.pem"
 private_key="$certificates_dir/privkey.pem"
 [[ -f "$certificate" ]] || fail "missing certificate: $certificate"
 [[ -f "$private_key" ]] || fail "missing private key: $private_key"
+[[ -r "$certificate" ]] || fail 'fullchain.pem must be readable by the deployment user'
+[[ -r "$private_key" ]] || fail 'privkey.pem must be readable by the deployment user'
 
 openssl x509 -in "$certificate" -noout >/dev/null 2>&1 || fail 'fullchain.pem is not a valid PEM certificate'
 openssl x509 -in "$certificate" -checkend 86400 -noout >/dev/null 2>&1 || fail 'TLS certificate is expired or expires within 24 hours'
