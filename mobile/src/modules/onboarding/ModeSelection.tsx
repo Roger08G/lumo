@@ -10,7 +10,7 @@ import {
 } from "react-icons/fi";
 import type { IconType } from "react-icons";
 
-import { useLumo } from "@app/state/LumoProvider.tsx";
+import { useLumo } from "@app/state/lumoContext.ts";
 import {
     GroupSecurityModal,
     type GroupSecurityAction,
@@ -113,6 +113,13 @@ export function ModeSelection({ onSelect }: ModeSelectionProps) {
                         cursor: "pointer",
                         fontSize: 12,
                         boxShadow: "0 8px 18px rgba(180,71,88,.16)",
+                        "@media (max-width: 350px)": {
+                            width: 44,
+                            minWidth: 44,
+                            padding: 0,
+                            fontSize: 0,
+                            justifyContent: "center",
+                        },
                     })}
                 >
                     <FiLogOut size={15} aria-hidden="true" />

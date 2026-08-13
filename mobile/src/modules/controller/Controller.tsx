@@ -31,15 +31,17 @@ import {
 } from "react-icons/fi";
 import type { IconType } from "react-icons";
 
-import { useLumo } from "@app/state/LumoProvider.tsx";
+import { useLumo } from "@app/state/lumoContext.ts";
 import {
     GroupSecurityModal,
     type GroupSecurityAction,
 } from "@modules/groups/components/GroupSecurityModal.tsx";
 import { BottomNavigation, type ControllerTab } from "@shared/components/BottomNavigation.tsx";
 import { BrandMark } from "@shared/components/BrandMark.tsx";
+import { StepProgress } from "@shared/components/StepProgress.tsx";
 import { Button, Field, IconButton, Modal, Pill, Toast, Toggle } from "@shared/components/ui.tsx";
 import { PLACE_PALETTE, PLACE_TONES, randomPlaceTone } from "@shared/styles/placePalette.ts";
+import { surface } from "@shared/styles/surfaces.ts";
 import type { EventKind, Place, PlaceIcon, PlaceTone, TimelineEvent } from "@shared/types/lumo.ts";
 import { formatClock, formatRelative, greeting } from "@shared/utils/format.ts";
 
@@ -47,13 +49,6 @@ const pulse = keyframes({
     "0%": { boxShadow: "0 0 0 0 rgba(104,66,166,.28)" },
     "70%": { boxShadow: "0 0 0 14px rgba(104,66,166,0)" },
     "100%": { boxShadow: "0 0 0 0 rgba(104,66,166,0)" },
-});
-
-const surface = css({
-    border: "1px solid var(--lumo-border)",
-    borderRadius: 22,
-    background: "rgba(255,255,255,.9)",
-    boxShadow: "0 9px 26px rgba(47,38,57,.045)",
 });
 
 const sectionTitle = css({
@@ -229,6 +224,22 @@ const eventIcons: Record<EventKind, IconType> = {
 };
 
 function Timeline({ events, compact = false }: { events: TimelineEvent[]; compact?: boolean }) {
+    if (events.length === 0) {
+        return (
+            <p
+                css={css({
+                    padding: "18px 4px",
+                    color: "var(--lumo-text-secondary)",
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    textAlign: "center",
+                })}
+            >
+                No hay actividad en las últimas 24 horas.
+            </p>
+        );
+    }
+
     return (
         <div css={css({ display: "grid" })}>
             {events.map((event, index) => {
@@ -581,6 +592,9 @@ function PlacesView({ onAdd, onEdit }: { onAdd: () => void; onEdit: (place: Plac
                                     transform: "translateY(-1px)",
                                     boxShadow: "0 12px 30px rgba(47,38,57,.075)",
                                 },
+                                "&:focus-visible": {
+                                    borderColor: palette.foreground,
+                                },
                             })}
                         >
                             <span
@@ -835,24 +849,7 @@ function PlaceModal({
             title={step === 0 ? (editing ? "Editar los datos" : "Nuevo lugar") : "Elige su estilo"}
         >
             <form onSubmit={save} css={css({ display: "grid", gap: 15 })}>
-                <div
-                    aria-label={`Paso ${step + 1} de 2`}
-                    css={css({ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7 })}
-                >
-                    {[0, 1].map((index) => (
-                        <span
-                            key={index}
-                            css={css({
-                                height: 5,
-                                borderRadius: 999,
-                                background:
-                                    index <= step
-                                        ? "var(--lumo-primary)"
-                                        : "var(--lumo-border-strong)",
-                            })}
-                        />
-                    ))}
-                </div>
+                <StepProgress current={step} total={2} variant="bars" />
 
                 {step === 0 ? (
                     <>
@@ -948,8 +945,8 @@ function PlaceModal({
                                             aria-pressed={selected}
                                             onClick={() => setColor(tone)}
                                             css={css({
-                                                width: 38,
-                                                height: 38,
+                                                width: 44,
+                                                height: 44,
                                                 display: "grid",
                                                 placeItems: "center",
                                                 padding: 5,
@@ -1021,6 +1018,9 @@ function PlaceModal({
                                                     ? selectedPalette.background
                                                     : "#fff",
                                                 cursor: "pointer",
+                                                transition:
+                                                    "color .18s ease, background .18s ease, border-color .18s ease, transform .18s ease",
+                                                "&:active": { transform: "scale(.96)" },
                                             })}
                                         >
                                             <option.icon size={20} />
@@ -1097,6 +1097,11 @@ export function Controller() {
         dispatch({ type: "MARK_EVENTS_READ" });
     };
 
+    const changeTab = (tab: ControllerTab) => {
+        setActiveTab(tab);
+        window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
+    };
+
     return (
         <main
             css={css({
@@ -1156,7 +1161,7 @@ export function Controller() {
                                 detail: "En la app real se abriría el teléfono. Esta acción es una demo.",
                             })
                         }
-                        onShowActivity={() => setActiveTab("activity")}
+                        onShowActivity={() => changeTab("activity")}
                     />
                 )}
                 {activeTab === "activity" && <ActivityView />}
@@ -1181,7 +1186,7 @@ export function Controller() {
                 )}
             </div>
 
-            <BottomNavigation active={activeTab} onChange={setActiveTab} />
+            <BottomNavigation active={activeTab} onChange={changeTab} />
 
             <Modal
                 open={notificationsOpen}
@@ -1203,7 +1208,7 @@ export function Controller() {
                         icon={FiActivity}
                         onClick={() => {
                             setNotificationsOpen(false);
-                            setActiveTab("activity");
+                            changeTab("activity");
                         }}
                     >
                         Ver toda la actividad

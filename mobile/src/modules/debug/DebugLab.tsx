@@ -16,9 +16,10 @@ import {
 } from "react-icons/fi";
 import type { IconType } from "react-icons";
 
-import { useLumo } from "@app/state/LumoProvider.tsx";
+import { useLumo } from "@app/state/lumoContext.ts";
 import { BrandMark } from "@shared/components/BrandMark.tsx";
 import { Button, Modal, Pill, Toast, Toggle } from "@shared/components/ui.tsx";
+import { surface as panel } from "@shared/styles/surfaces.ts";
 import type { DebugScenario, DemoState } from "@shared/types/lumo.ts";
 import { formatClock } from "@shared/utils/format.ts";
 
@@ -75,13 +76,6 @@ const SCENARIOS: ScenarioOption[] = [
         tone: "amber",
     },
 ];
-
-const panel = css({
-    border: "1px solid var(--lumo-border)",
-    borderRadius: 22,
-    background: "rgba(255,255,255,.92)",
-    boxShadow: "0 9px 24px rgba(47,38,57,.045)",
-});
 
 const tones = {
     purple: { color: "var(--lumo-primary)", background: "var(--lumo-lavender)" },
@@ -445,6 +439,18 @@ export function DebugLab() {
                     <Pill tone="neutral">{state.events.length}</Pill>
                 </div>
                 <div css={css({ display: "grid" })}>
+                    {state.events.length === 0 && (
+                        <p
+                            css={css({
+                                padding: "18px 0",
+                                color: "var(--lumo-text-secondary)",
+                                fontSize: 11,
+                                textAlign: "center",
+                            })}
+                        >
+                            Aún no hay eventos en las últimas 24 horas.
+                        </p>
+                    )}
                     {state.events.slice(0, 5).map((event, index) => (
                         <div
                             key={event.id}

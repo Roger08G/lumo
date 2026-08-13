@@ -253,6 +253,7 @@ export function Modal({ open, onClose, title, eyebrow, children, compact = false
     const backdropRef = useRef<HTMLDivElement>(null);
     const panelRef = useRef<HTMLElement>(null);
     const closeRef = useRef(onClose);
+    const previousFocusRef = useRef<HTMLElement | null>(null);
     const contentRef = useRef({ title, eyebrow, children });
 
     if (open) contentRef.current = { title, eyebrow, children };
@@ -319,9 +320,51 @@ export function Modal({ open, onClose, title, eyebrow, children, compact = false
     }, [mounted, open]);
 
     useEffect(() => {
+        if (!open) return;
+        previousFocusRef.current = document.activeElement as HTMLElement | null;
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+
+        const focusTimeout = window.setTimeout(() => {
+            const firstFocusable =
+                panelRef.current?.querySelector<HTMLElement>("[autofocus]") ??
+                panelRef.current?.querySelector<HTMLElement>("input:not([disabled])") ??
+                panelRef.current?.querySelector<HTMLElement>("select:not([disabled])") ??
+                panelRef.current?.querySelector<HTMLElement>("textarea:not([disabled])") ??
+                panelRef.current?.querySelector<HTMLElement>("button:not([disabled])") ??
+                panelRef.current?.querySelector<HTMLElement>('[tabindex]:not([tabindex="-1"])');
+            firstFocusable?.focus();
+        }, 30);
+
+        return () => {
+            window.clearTimeout(focusTimeout);
+            document.body.style.overflow = previousOverflow;
+            previousFocusRef.current?.focus();
+        };
+    }, [open]);
+
+    useEffect(() => {
         if (!mounted) return;
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.key === "Escape") closeRef.current();
+            if (event.key !== "Tab" || !panelRef.current) return;
+
+            const focusable = Array.from(
+                panelRef.current.querySelectorAll<HTMLElement>(
+                    'input:not([disabled]), button:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+                ),
+            );
+            if (focusable.length === 0) return;
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
         };
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
@@ -358,6 +401,7 @@ export function Modal({ open, onClose, title, eyebrow, children, compact = false
                 css={css({
                     width: "min(100%, 460px)",
                     maxHeight: "min(88dvh, 760px)",
+                    overscrollBehavior: "contain",
                     overflowY: "auto",
                     padding: compact ? "20px" : "24px 20px max(24px, env(safe-area-inset-bottom))",
                     border: "1px solid rgba(255,255,255,.8)",
@@ -561,7 +605,7 @@ export function Pill({
                 background: colors[0],
                 fontSize: 11,
                 lineHeight: 1.2,
-                whiteSpace: "nowrap",
+                whiteSpace: "normal",
             })}
         >
             {children}

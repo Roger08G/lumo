@@ -1,12 +1,6 @@
-import {
-    createContext,
-    useContext,
-    useEffect,
-    useMemo,
-    useReducer,
-    type Dispatch,
-    type ReactNode,
-} from "react";
+import { useEffect, useMemo, useReducer, type ReactNode } from "react";
+
+import { LumoContext } from "@app/state/lumoContext.ts";
 
 import type {
     DebugScenario,
@@ -35,6 +29,7 @@ const EMPTY_GROUP: GroupState = {
     code: "",
     pin: "",
     userName: "",
+    supervisorName: "",
     trackedPersonName: "",
     role: null,
     entry: null,
@@ -173,6 +168,11 @@ function createInitialState(): LumoState {
               userName:
                   storedGroup.userName ||
                   (storedGroup.entry === "joined" ? "Miembro" : "Supervisor"),
+              supervisorName:
+                  storedGroup.supervisorName ||
+                  (storedGroup.entry === "joined"
+                      ? "Supervisor"
+                      : storedGroup.userName || "Supervisor"),
               trackedPersonName: storedGroup.trackedPersonName || "Abuelo",
               role: storedGroup.role || (storedGroup.entry === "joined" ? "member" : "supervisor"),
           }
@@ -438,8 +438,10 @@ function reducer(state: LumoState, action: LumoAction): LumoState {
                 ...state,
                 events: state.events.map((event) => ({ ...event, read: true })),
             };
-        case "PURGE_OLD_EVENTS":
-            return { ...state, events: recentEvents(state.events) };
+        case "PURGE_OLD_EVENTS": {
+            const events = recentEvents(state.events);
+            return events.length === state.events.length ? state : { ...state, events };
+        }
         case "RESET_DEMO":
             return {
                 ...state,
@@ -450,18 +452,11 @@ function reducer(state: LumoState, action: LumoAction): LumoState {
     }
 }
 
-interface LumoContextValue {
-    state: LumoState;
-    dispatch: Dispatch<LumoAction>;
-}
-
-const LumoContext = createContext<LumoContextValue | null>(null);
-
 export function LumoProvider({ children }: { children: ReactNode }) {
     const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
 
     useEffect(() => {
-        writeStored(localStorage, STORAGE_KEYS.schema, 5);
+        writeStored(localStorage, STORAGE_KEYS.schema, 6);
         writeStored(localStorage, STORAGE_KEYS.mode, state.mode);
         writeStored(localStorage, STORAGE_KEYS.demo, state.demo);
         writeStored(localStorage, STORAGE_KEYS.places, state.places);
@@ -486,10 +481,4 @@ export function LumoProvider({ children }: { children: ReactNode }) {
     const value = useMemo(() => ({ state, dispatch }), [state]);
 
     return <LumoContext.Provider value={value}>{children}</LumoContext.Provider>;
-}
-
-export function useLumo() {
-    const context = useContext(LumoContext);
-    if (!context) throw new Error("useLumo must be used inside LumoProvider");
-    return context;
 }

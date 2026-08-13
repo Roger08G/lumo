@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { css, keyframes } from "@emotion/react";
 
-import { LumoProvider, useLumo } from "@app/state/LumoProvider.tsx";
+import { LumoProvider } from "@app/state/LumoProvider.tsx";
+import { useLumo } from "@app/state/lumoContext.ts";
 import GroupAccess from "@modules/groups/GroupAccess.tsx";
 import { Controller } from "@modules/controller/Controller.tsx";
 import { DebugLab } from "@modules/debug/DebugLab.tsx";

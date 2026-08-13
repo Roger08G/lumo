@@ -17,25 +17,19 @@ import {
 } from "react-icons/fi";
 import type { IconType } from "react-icons";
 
-import { useLumo } from "@app/state/LumoProvider.tsx";
+import { useLumo } from "@app/state/lumoContext.ts";
 import {
     GroupSecurityModal,
     type GroupSecurityAction,
 } from "@modules/groups/components/GroupSecurityModal.tsx";
 import { BrandMark } from "@shared/components/BrandMark.tsx";
 import { Button, Field, IconButton, Modal, Pill, Toast, Toggle } from "@shared/components/ui.tsx";
+import { surface as card } from "@shared/styles/surfaces.ts";
 import { formatRelative } from "@shared/utils/format.ts";
 
 const breathe = keyframes({
     "0%, 100%": { transform: "scale(1)", boxShadow: "0 0 0 0 rgba(45,118,89,.18)" },
     "50%": { transform: "scale(1.035)", boxShadow: "0 0 0 15px rgba(45,118,89,0)" },
-});
-
-const card = css({
-    border: "1px solid var(--lumo-border)",
-    borderRadius: 22,
-    background: "rgba(255,255,255,.92)",
-    boxShadow: "0 9px 24px rgba(47,38,57,.045)",
 });
 
 interface CheckRowProps {
@@ -107,7 +101,15 @@ export function Tracker() {
     const permissionOk = state.demo.permission === "granted";
     const connectionOk = state.demo.connection === "online";
     const batteryOk = state.demo.battery > 15;
-    const allGood = permissionOk && connectionOk;
+    const allGood = permissionOk && connectionOk && batteryOk;
+    const supervisorName = state.group.supervisorName || "tu supervisor";
+    const statusMessage = allGood
+        ? `Tu ubicación se está compartiendo con ${supervisorName}.`
+        : !permissionOk
+          ? `La ubicación está desactivada. ${supervisorName} no puede ver tu posición actual.`
+          : !connectionOk
+            ? "No hay conexión disponible. Lumo lo intentará de nuevo automáticamente."
+            : "La batería está baja. Conecta este teléfono para mantener la protección activa.";
 
     const unlock = () => {
         if (pin !== state.group.pin) {
@@ -203,7 +205,11 @@ export function Tracker() {
                             letterSpacing: "-.04em",
                         })}
                     >
-                        {allGood ? "Todo está en orden" : "Lumo no puede compartir tu ubicación"}
+                        {allGood
+                            ? "Todo está en orden"
+                            : batteryOk
+                              ? "Lumo no puede compartir tu ubicación"
+                              : "Este teléfono necesita batería"}
                     </h1>
                     <p
                         css={css({
@@ -213,11 +219,7 @@ export function Tracker() {
                             lineHeight: 1.55,
                         })}
                     >
-                        {allGood
-                            ? "Tu ubicación se está compartiendo con Roger y María."
-                            : !permissionOk
-                              ? "La ubicación está desactivada. Roger no puede ver tu posición actual."
-                              : "No hay conexión disponible. Lumo lo intentará de nuevo automáticamente."}
+                        {statusMessage}
                     </p>
                 </div>
             </section>
@@ -346,7 +348,7 @@ export function Tracker() {
                             if (event.key === "Enter") unlock();
                         }}
                     />
-                    <Button fullWidth icon={FiLock} onClick={unlock}>
+                    <Button fullWidth icon={FiLock} disabled={pin.length !== 6} onClick={unlock}>
                         Abrir ajustes
                     </Button>
                 </div>
@@ -429,7 +431,7 @@ export function Tracker() {
                 open={helpOpen}
                 onClose={() => setHelpOpen(false)}
                 eyebrow="Ayuda familiar"
-                title="¿Quieres avisar a Roger?"
+                title={`¿Quieres avisar a ${supervisorName}?`}
             >
                 <div
                     css={css({
@@ -459,8 +461,8 @@ export function Tracker() {
                             lineHeight: 1.55,
                         })}
                     >
-                        En la versión real, Roger recibiría un aviso prioritario con la última
-                        ubicación disponible.
+                        En la versión real, {supervisorName} recibiría un aviso prioritario con la
+                        última ubicación disponible.
                     </p>
                     <Button
                         fullWidth
@@ -469,11 +471,11 @@ export function Tracker() {
                             setHelpOpen(false);
                             setToast({
                                 title: "Aviso enviado",
-                                detail: "Roger sabría que necesitas ayuda",
+                                detail: `${supervisorName} sabría que necesitas ayuda`,
                             });
                         }}
                     >
-                        Avisar a Roger
+                        Avisar a {supervisorName}
                     </Button>
                 </div>
             </Modal>
