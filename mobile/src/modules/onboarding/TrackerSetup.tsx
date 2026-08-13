@@ -9,7 +9,7 @@ import {
 } from "react-icons/fi";
 import type { IconType } from "react-icons";
 
-import { useLumo } from "@app/state/LumoProvider.tsx";
+import { useLumo } from "@app/state/lumoContext.ts";
 import { BrandMark } from "@shared/components/BrandMark.tsx";
 import { Button, Pill } from "@shared/components/ui.tsx";
 import type { PreferencesState } from "@shared/types/lumo.ts";
@@ -126,7 +126,7 @@ export function TrackerSetup() {
                             key={permission.key}
                             css={css({
                                 display: "grid",
-                                gridTemplateColumns: "46px 1fr auto",
+                                gridTemplateColumns: "46px minmax(0, 1fr) auto",
                                 alignItems: "center",
                                 gap: 12,
                                 padding: 14,
@@ -172,7 +172,7 @@ export function TrackerSetup() {
                                 }
                                 css={css({
                                     minWidth: 45,
-                                    height: 38,
+                                    minHeight: 44,
                                     display: "grid",
                                     placeItems: "center",
                                     padding: "0 10px",
@@ -184,6 +184,14 @@ export function TrackerSetup() {
                                         : "var(--lumo-lavender)",
                                     cursor: "pointer",
                                     fontSize: 11,
+                                    "@media (max-width: 350px)": {
+                                        minWidth: 44,
+                                        padding: 0,
+                                        fontSize: active ? 11 : 0,
+                                        "&::after": active
+                                            ? undefined
+                                            : { content: '"+"', fontSize: 18 },
+                                    },
                                 })}
                             >
                                 {active ? <FiCheck size={18} /> : "Activar"}

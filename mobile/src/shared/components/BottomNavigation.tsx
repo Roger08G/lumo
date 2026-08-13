@@ -46,6 +46,7 @@ export function BottomNavigation({ active, onChange }: BottomNavigationProps) {
                         key={item.id}
                         type="button"
                         aria-current={selected ? "page" : undefined}
+                        aria-label={item.label}
                         onClick={() => onChange(item.id)}
                         css={css({
                             minHeight: 58,

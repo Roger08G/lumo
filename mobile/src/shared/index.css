@@ -7,7 +7,14 @@
 }
 
 :root {
-    font-family: "Rubik", ui-rounded, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family:
+        "Rubik",
+        ui-rounded,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
     color: #2b2630;
     background: #ede7f2;
     font-synthesis: none;
@@ -52,9 +59,9 @@ body {
     min-height: 100dvh;
     margin: 0;
     overflow-x: hidden;
+    overscroll-behavior-y: none;
     background:
-        radial-gradient(circle at 16% 8%, rgba(165, 131, 225, 0.2), transparent 28rem),
-        #ede7f2;
+        radial-gradient(circle at 16% 8%, rgba(165, 131, 225, 0.2), transparent 28rem), #ede7f2;
 }
 
 body,
@@ -91,6 +98,16 @@ button {
     margin: 0;
 }
 
+button:disabled,
+input:disabled,
+select:disabled {
+    cursor: not-allowed;
+}
+
+svg {
+    flex: 0 0 auto;
+}
+
 h1,
 h2,
 h3,
@@ -111,7 +128,6 @@ p {
 }
 
 @media (prefers-reduced-motion: reduce) {
-
     *,
     *::before,
     *::after {

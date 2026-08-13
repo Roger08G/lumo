@@ -13,6 +13,7 @@ import {
 
 import { GroupButtons } from "@modules/groups/components/GroupButtons.tsx";
 import { BrandMark } from "@shared/components/BrandMark.tsx";
+import { StepProgress } from "@shared/components/StepProgress.tsx";
 import { Button, Field, Modal, Pill } from "@shared/components/ui.tsx";
 import type { GroupEntryPayload } from "@shared/types/lumo.ts";
 
@@ -37,6 +38,7 @@ interface PreviewInvite {
     kind: "lumo-group-invite";
     name: string;
     code: string;
+    supervisorName?: string;
     trackedPersonName?: string;
     pin?: string;
 }
@@ -44,24 +46,6 @@ interface PreviewInvite {
 type GroupAction = "create" | "join" | null;
 type CreateStep = 0 | 1 | 2 | 3;
 type JoinStep = "scan" | "pin";
-
-const stepDots = (current: number, total: number) => (
-    <div aria-label={`Paso ${current + 1} de ${total}`} css={css({ display: "flex", gap: 6 })}>
-        {Array.from({ length: total }, (_, index) => (
-            <span
-                key={index}
-                css={css({
-                    width: index === current ? 22 : 6,
-                    height: 6,
-                    borderRadius: 999,
-                    background:
-                        index === current ? "var(--lumo-primary)" : "var(--lumo-border-strong)",
-                    transition: "width .24s ease, background .24s ease",
-                })}
-            />
-        ))}
-    </div>
-);
 
 function readPreviewInvite(): PreviewInvite {
     try {
@@ -85,6 +69,7 @@ function readPreviewInvite(): PreviewInvite {
         kind: "lumo-group-invite",
         name: "Familia Lumo",
         code: "LUMO24",
+        supervisorName: "Supervisor",
         trackedPersonName: "Abuelo",
     };
 }
@@ -167,6 +152,7 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                 code: `LUMO${Math.floor(10 + Math.random() * 90)}`,
                 pin: groupPin,
                 userName: userName.trim(),
+                supervisorName: userName.trim(),
                 trackedPersonName: trackedPersonName.trim(),
                 role: "supervisor",
                 entry: "created",
@@ -194,6 +180,7 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
             code: scannedInvite.code,
             pin: groupPin,
             userName: scannedInvite.trackedPersonName || "Miembro",
+            supervisorName: scannedInvite.supervisorName || "Supervisor",
             trackedPersonName: scannedInvite.trackedPersonName || "Persona acompañada",
             role: "member",
             entry: "joined",
@@ -292,7 +279,7 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                 title={createTitle}
             >
                 <form onSubmit={submit} css={css({ display: "grid", gap: 17 })}>
-                    {stepDots(createStep, 4)}
+                    <StepProgress current={createStep} total={4} />
                     {createStep === 0 && (
                         <Field
                             key="group-name"
@@ -392,7 +379,17 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                                 Atrás
                             </Button>
                         )}
-                        <Button type="submit" fullWidth loading={loading}>
+                        <Button
+                            type="submit"
+                            fullWidth
+                            loading={loading}
+                            disabled={
+                                (createStep === 0 && groupName.trim().length < 2) ||
+                                (createStep === 1 && userName.trim().length < 2) ||
+                                (createStep === 2 && trackedPersonName.trim().length < 2) ||
+                                (createStep === 3 && groupPin.length !== 6)
+                            }
+                        >
                             {createStep === 3 ? "Crear como supervisor" : "Continuar"}
                         </Button>
                     </div>
@@ -533,7 +530,12 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                             >
                                 Atrás
                             </Button>
-                            <Button type="submit" fullWidth loading={loading}>
+                            <Button
+                                type="submit"
+                                fullWidth
+                                loading={loading}
+                                disabled={groupPin.length !== 6}
+                            >
                                 Unirme al grupo
                             </Button>
                         </div>

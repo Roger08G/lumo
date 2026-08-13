@@ -3,7 +3,7 @@ import { css } from "@emotion/react";
 import { FiCheck, FiCopy, FiKey, FiLock, FiLogOut, FiUserPlus } from "react-icons/fi";
 import { QRCodeSVG } from "qrcode.react";
 
-import { useLumo } from "@app/state/LumoProvider.tsx";
+import { useLumo } from "@app/state/lumoContext.ts";
 import { Button, Field, Modal, Pill } from "@shared/components/ui.tsx";
 
 export type GroupSecurityAction = "invite" | "leave";
@@ -57,6 +57,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                     kind: "lumo-group-invite",
                     name: state.group.name,
                     code: state.group.code,
+                    supervisorName: state.group.supervisorName,
                     trackedPersonName: state.group.trackedPersonName,
                     pin: state.group.pin,
                 }),
@@ -120,6 +121,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                                     kind: "lumo-group-invite",
                                     name: state.group.name,
                                     code: state.group.code,
+                                    supervisorName: state.group.supervisorName,
                                     trackedPersonName: state.group.trackedPersonName,
                                 })}
                                 size={166}
@@ -217,6 +219,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                     <Button
                         type="submit"
                         fullWidth
+                        disabled={pin.length !== 6}
                         variant={isInvite ? "primary" : "danger"}
                         icon={isInvite ? FiUserPlus : FiLogOut}
                     >

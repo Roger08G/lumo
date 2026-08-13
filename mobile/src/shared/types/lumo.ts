@@ -26,6 +26,7 @@ export interface GroupState {
     code: string;
     pin: string;
     userName: string;
+    supervisorName: string;
     trackedPersonName: string;
     role: GroupRole | null;
     entry: "created" | "joined" | null;
@@ -95,6 +96,7 @@ export interface GroupEntryPayload {
     code: string;
     pin: string;
     userName: string;
+    supervisorName: string;
     trackedPersonName: string;
     role: GroupRole;
     entry: "created" | "joined";
