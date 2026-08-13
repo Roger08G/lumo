@@ -39,11 +39,14 @@ estén montadas en el contenedor:
 
 ```bash
 mkdir -p certs
-sudo install -o 10001 -g root -m 0400 /ruta/fullchain.pem certs/fullchain.pem
-sudo install -o 10001 -g root -m 0400 /ruta/privkey.pem certs/privkey.pem
+deploy_group="$(id -g)"
+sudo install -o 10001 -g "$deploy_group" -m 0444 /ruta/fullchain.pem certs/fullchain.pem
+sudo install -o 10001 -g "$deploy_group" -m 0440 /ruta/privkey.pem certs/privkey.pem
 ```
 
 El proceso se ejecuta con UID `10001`, por lo que necesita permiso de lectura sobre ambos archivos.
+El grupo del usuario de despliegue también necesita leer la clave para que el script pueda validarla
+sin ejecutarse como `root`; ningún otro usuario recibe acceso a ella.
 
 ### Proxy inverso en Docker
 
@@ -128,8 +131,9 @@ curl --fail --silent --show-error https://api.example.com:8443/health
 Renovación del certificado:
 
 ```bash
-sudo install -o 10001 -g root -m 0400 /ruta/fullchain.pem certs/fullchain.pem
-sudo install -o 10001 -g root -m 0400 /ruta/privkey.pem certs/privkey.pem
+deploy_group="$(id -g)"
+sudo install -o 10001 -g "$deploy_group" -m 0444 /ruta/fullchain.pem certs/fullchain.pem
+sudo install -o 10001 -g "$deploy_group" -m 0440 /ruta/privkey.pem certs/privkey.pem
 docker compose restart lumo-api
 ```
 
