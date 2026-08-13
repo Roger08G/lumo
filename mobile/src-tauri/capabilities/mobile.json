@@ -1,0 +1,18 @@
+{
+    "$schema": "../gen/schemas/mobile-schema.json",
+    "identifier": "mobile",
+    "description": "Camera and location access used by the paired mobile device",
+    "windows": ["main"],
+    "platforms": ["iOS", "android"],
+    "permissions": [
+        "core:default",
+        "barcode-scanner:allow-check-permissions",
+        "barcode-scanner:allow-request-permissions",
+        "barcode-scanner:allow-scan",
+        "barcode-scanner:allow-cancel",
+        "geolocation:allow-check-permissions",
+        "geolocation:allow-request-permissions",
+        "geolocation:allow-get-current-position",
+        "geolocation:allow-watch-position"
+    ]
+}

@@ -1,0 +1,11 @@
+/target/
+/.lumo-data/
+
+.env
+.env.*
+!.env.example
+/certs/
+
+*.db-shm
+*.db-wal
+*.key
