@@ -1,0 +1,12 @@
+.git
+.github
+.lumo-data
+.env
+certs/
+**/node_modules
+**/dist
+**/target
+mobile/gen
+*.sqlite3
+*.db-shm
+*.db-wal

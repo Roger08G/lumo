@@ -1,0 +1,27 @@
+services:
+  lumo-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lumo-api:local
+    restart: unless-stopped
+    environment:
+      LUMO_API_BIND: 0.0.0.0:8443
+      LUMO_API_DATABASE: /data/lumo-api.sqlite3
+      LUMO_API_PASSWORD: ${LUMO_API_PASSWORD:?Define LUMO_API_PASSWORD in .env}
+      LUMO_TLS_CERT_PATH: /certs/fullchain.pem
+      LUMO_TLS_KEY_PATH: /certs/privkey.pem
+    ports:
+      - "${LUMO_API_PORT:-8443}:8443"
+    volumes:
+      - lumo-data:/data
+      - ./certs:/certs:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/lumo-api", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  lumo-data:
