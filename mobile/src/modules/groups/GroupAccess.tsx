@@ -6,6 +6,7 @@ import {
     FiChevronLeft,
     FiHeart,
     FiLock,
+    FiPhone,
     FiShield,
     FiUser,
     FiUsers,
@@ -83,7 +84,9 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
     const [joinStep, setJoinStep] = useState<JoinStep>("scan");
     const [groupName, setGroupName] = useState("");
     const [userName, setUserName] = useState("");
+    const [supervisorPhone, setSupervisorPhone] = useState("");
     const [trackedPersonName, setTrackedPersonName] = useState("");
+    const [trackedPersonPhone, setTrackedPersonPhone] = useState("");
     const [groupPin, setGroupPin] = useState("");
     const [scannedInvite, setScannedInvite] = useState<PreviewInvite | null>(null);
     const [error, setError] = useState("");
@@ -94,7 +97,9 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
         setJoinStep("scan");
         setGroupName("");
         setUserName("");
+        setSupervisorPhone("");
         setTrackedPersonName("");
+        setTrackedPersonPhone("");
         setGroupPin("");
         setScannedInvite(null);
         setError("");
@@ -130,6 +135,10 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                     setError("Escribe tu nombre");
                     return;
                 }
+                if (!/^\+?[0-9]{7,15}$/.test(supervisorPhone)) {
+                    setError("Introduce un teléfono válido");
+                    return;
+                }
                 setCreateStep(2);
                 return;
             }
@@ -137,6 +146,10 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
             if (createStep === 2) {
                 if (trackedPersonName.trim().length < 2) {
                     setError("Escribe el nombre de la persona acompañada");
+                    return;
+                }
+                if (!/^\+?[0-9]{7,15}$/.test(trackedPersonPhone)) {
+                    setError("Introduce un teléfono válido");
                     return;
                 }
                 setCreateStep(3);
@@ -156,7 +169,9 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                     pin: groupPin,
                     userName: userName.trim(),
                     supervisorName: userName.trim(),
+                    supervisorPhone,
                     trackedPersonName: trackedPersonName.trim(),
+                    trackedPersonPhone,
                     role: "supervisor",
                     entry: "created",
                 });
@@ -187,7 +202,9 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                 pin: groupPin,
                 userName: scannedInvite.trackedPersonName || "Miembro",
                 supervisorName: scannedInvite.supervisorName || "Supervisor",
+                supervisorPhone: "",
                 trackedPersonName: scannedInvite.trackedPersonName || "Persona acompañada",
+                trackedPersonPhone: "",
                 role: "member",
                 entry: "joined",
                 inviteToken: scannedInvite.token,
@@ -320,32 +337,70 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                         />
                     )}
                     {createStep === 1 && (
-                        <Field
-                            key="user-name"
-                            autoFocus
-                            label="Tu nombre"
-                            placeholder="Tu nombre"
-                            icon={FiUser}
-                            value={userName}
-                            onChange={(event) => {
-                                setUserName(event.target.value);
-                                setError("");
-                            }}
-                        />
+                        <div key="supervisor-details" css={css({ display: "grid", gap: 12 })}>
+                            <Field
+                                autoFocus
+                                label="Tu nombre"
+                                placeholder="Tu nombre"
+                                icon={FiUser}
+                                value={userName}
+                                onChange={(event) => {
+                                    setUserName(event.target.value);
+                                    setError("");
+                                }}
+                            />
+                            <Field
+                                type="tel"
+                                inputMode="tel"
+                                autoComplete="tel"
+                                label="Tu teléfono"
+                                placeholder="Número de teléfono"
+                                icon={FiPhone}
+                                value={supervisorPhone}
+                                onChange={(event) => {
+                                    setSupervisorPhone(
+                                        event.target.value
+                                            .replace(/(?!^)\+/g, "")
+                                            .replace(/[^\d+]/g, "")
+                                            .slice(0, 16),
+                                    );
+                                    setError("");
+                                }}
+                            />
+                        </div>
                     )}
                     {createStep === 2 && (
-                        <Field
-                            key="tracked-person-name"
-                            autoFocus
-                            label="Nombre de la persona acompañada"
-                            placeholder="Nombre de la persona"
-                            icon={FiHeart}
-                            value={trackedPersonName}
-                            onChange={(event) => {
-                                setTrackedPersonName(event.target.value);
-                                setError("");
-                            }}
-                        />
+                        <div key="tracked-person-details" css={css({ display: "grid", gap: 12 })}>
+                            <Field
+                                autoFocus
+                                label="Nombre de la persona acompañada"
+                                placeholder="Nombre de la persona"
+                                icon={FiHeart}
+                                value={trackedPersonName}
+                                onChange={(event) => {
+                                    setTrackedPersonName(event.target.value);
+                                    setError("");
+                                }}
+                            />
+                            <Field
+                                type="tel"
+                                inputMode="tel"
+                                autoComplete="tel"
+                                label="Su teléfono"
+                                placeholder="Número de teléfono"
+                                icon={FiPhone}
+                                value={trackedPersonPhone}
+                                onChange={(event) => {
+                                    setTrackedPersonPhone(
+                                        event.target.value
+                                            .replace(/(?!^)\+/g, "")
+                                            .replace(/[^\d+]/g, "")
+                                            .slice(0, 16),
+                                    );
+                                    setError("");
+                                }}
+                            />
+                        </div>
                     )}
                     {createStep === 3 && (
                         <div key="group-pin" css={css({ display: "grid", gap: 12 })}>
@@ -410,8 +465,12 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                             loading={loading}
                             disabled={
                                 (createStep === 0 && groupName.trim().length < 2) ||
-                                (createStep === 1 && userName.trim().length < 2) ||
-                                (createStep === 2 && trackedPersonName.trim().length < 2) ||
+                                (createStep === 1 &&
+                                    (userName.trim().length < 2 ||
+                                        !/^\+?[0-9]{7,15}$/.test(supervisorPhone))) ||
+                                (createStep === 2 &&
+                                    (trackedPersonName.trim().length < 2 ||
+                                        !/^\+?[0-9]{7,15}$/.test(trackedPersonPhone))) ||
                                 (createStep === 3 && groupPin.length !== 6)
                             }
                         >

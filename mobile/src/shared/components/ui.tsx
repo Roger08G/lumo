@@ -451,9 +451,10 @@ interface ToggleProps {
     onChange: (checked: boolean) => void;
     label: string;
     description?: string;
+    disabled?: boolean;
 }
 
-export function Toggle({ checked, onChange, label, description }: ToggleProps) {
+export function Toggle({ checked, onChange, label, description, disabled = false }: ToggleProps) {
     return (
         <label
             css={css({
@@ -462,7 +463,7 @@ export function Toggle({ checked, onChange, label, description }: ToggleProps) {
                 alignItems: "center",
                 justifyContent: "space-between",
                 gap: 16,
-                cursor: "pointer",
+                cursor: disabled ? "default" : "pointer",
             })}
         >
             <span css={css({ display: "grid", gap: 3 })}>
@@ -482,6 +483,7 @@ export function Toggle({ checked, onChange, label, description }: ToggleProps) {
             <input
                 type="checkbox"
                 checked={checked}
+                disabled={disabled}
                 onChange={(event) => onChange(event.target.checked)}
                 css={css({
                     width: 46,
@@ -491,7 +493,7 @@ export function Toggle({ checked, onChange, label, description }: ToggleProps) {
                     border: "2px solid transparent",
                     borderRadius: 20,
                     background: checked ? "var(--lumo-primary)" : "#d9d4dc",
-                    cursor: "pointer",
+                    cursor: disabled ? "default" : "pointer",
                     transition: "background .2s ease",
                     "&::after": {
                         content: '""',

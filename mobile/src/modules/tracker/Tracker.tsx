@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { css, keyframes } from "@emotion/react";
 import {
     FiAlertTriangle,
@@ -9,6 +9,7 @@ import {
     FiLock,
     FiLogOut,
     FiMapPin,
+    FiPhone,
     FiSettings,
     FiShield,
     FiSmartphone,
@@ -99,18 +100,26 @@ export function Tracker() {
     const [pinError, setPinError] = useState("");
     const [unlocking, setUnlocking] = useState(false);
     const [toast, setToast] = useState<{ title: string; detail?: string } | null>(null);
-    const permissionOk = state.demo.permission === "granted";
+    const permissionOk = state.mobile
+        ? state.mobile.preciseLocation === "granted" &&
+          state.mobile.backgroundLocation !== "denied" &&
+          state.mobile.locationServicesEnabled
+        : state.demo.permission === "granted";
+    const trackingOk = state.mobile?.trackingEnabled ?? state.preferences.trackerSetupComplete;
     const connectionOk = state.demo.connection === "online";
-    const batteryOk = state.demo.battery > 15;
-    const allGood = permissionOk && connectionOk && batteryOk;
+    const batteryPercent = state.mobile?.batteryPercent ?? state.demo.battery;
+    const batteryOk = batteryPercent > 15;
+    const allGood = permissionOk && trackingOk && connectionOk && batteryOk;
     const supervisorName = state.group.supervisorName || "tu supervisor";
     const statusMessage = allGood
         ? `Tu ubicación se está compartiendo con ${supervisorName}.`
-        : !permissionOk
-          ? `La ubicación está desactivada. ${supervisorName} no puede ver tu posición actual.`
-          : !connectionOk
-            ? "No hay conexión disponible. Lumo lo intentará de nuevo automáticamente."
-            : "La batería está baja. Conecta este teléfono para mantener la protección activa.";
+        : !trackingOk
+          ? "El seguimiento está detenido. Actívalo desde los ajustes protegidos."
+          : !permissionOk
+            ? `La ubicación está desactivada. ${supervisorName} no puede ver tu posición actual.`
+            : !connectionOk
+              ? "No hay conexión disponible. Lumo lo intentará de nuevo automáticamente."
+              : "La batería está baja. Conecta este teléfono para mantener la protección activa.";
 
     const unlock = async () => {
         setUnlocking(true);
@@ -128,33 +137,6 @@ export function Tracker() {
             setUnlocking(false);
         }
     };
-
-    useEffect(() => {
-        if (!backend.isMobileNative()) return;
-        let active = true;
-        const synchronizeLocation = async () => {
-            try {
-                await backend.processPending();
-                const position = await backend.captureLocation();
-                if (!position) return;
-                const snapshot = await backend.reportLocation(
-                    position.coords.latitude,
-                    position.coords.longitude,
-                    position.coords.accuracy,
-                    state.demo.battery,
-                );
-                if (active && snapshot) dispatch({ type: "HYDRATE_BACKEND", payload: snapshot });
-            } catch {
-                // The synchronized snapshot keeps the last known location until the next retry.
-            }
-        };
-        void synchronizeLocation();
-        const interval = window.setInterval(synchronizeLocation, 30_000);
-        return () => {
-            active = false;
-            window.clearInterval(interval);
-        };
-    }, [backend, dispatch, state.demo.battery]);
 
     const openSecurity = (action: GroupSecurityAction) => {
         setSettingsOpen(false);
@@ -262,7 +244,13 @@ export function Tracker() {
                 <CheckRow
                     icon={FiMapPin}
                     title="Ubicación"
-                    detail={permissionOk ? "Permitida siempre" : "Permiso desactivado"}
+                    detail={
+                        permissionOk
+                            ? trackingOk
+                                ? "Permitida siempre"
+                                : "Seguimiento detenido"
+                            : "Revisa los permisos de Android"
+                    }
                     ok={permissionOk}
                 />
                 <CheckRow
@@ -315,7 +303,7 @@ export function Tracker() {
                             "&::after": {
                                 content: '""',
                                 display: "block",
-                                width: `${state.demo.battery}%`,
+                                width: `${batteryPercent}%`,
                                 height: "100%",
                                 borderRadius: 8,
                                 background: batteryOk
@@ -325,7 +313,7 @@ export function Tracker() {
                         })}
                     />
                 </span>
-                <strong css={css({ fontSize: 14 })}>{state.demo.battery} %</strong>
+                <strong css={css({ fontSize: 14 })}>{batteryPercent} %</strong>
             </section>
 
             <Button
@@ -403,27 +391,57 @@ export function Tracker() {
                 <div css={css({ display: "grid", gap: 13 })}>
                     <article css={css(card, { padding: "4px 14px" })}>
                         <Toggle
-                            label="Ubicación compartida"
-                            description="Estado simulado del permiso"
-                            checked={permissionOk}
-                            onChange={(checked) =>
-                                dispatch({
-                                    type: "SET_PERMISSION",
-                                    payload: checked ? "granted" : "revoked",
-                                })
+                            label="Seguimiento activo"
+                            description={
+                                trackingOk
+                                    ? "El servicio de ubicación está funcionando"
+                                    : "El servicio de ubicación está detenido"
                             }
+                            checked={trackingOk}
+                            onChange={async (checked) => {
+                                try {
+                                    const result = await backend.setControlledTracking(checked);
+                                    if (result.status) {
+                                        dispatch({
+                                            type: "SYNC_MOBILE_STATUS",
+                                            payload: result.status,
+                                        });
+                                    }
+                                    if (result.snapshot) {
+                                        dispatch({
+                                            type: "HYDRATE_BACKEND",
+                                            payload: result.snapshot,
+                                        });
+                                    }
+                                } catch (requestError) {
+                                    setToast({
+                                        title: "No se ha podido cambiar",
+                                        detail:
+                                            requestError instanceof Error
+                                                ? requestError.message
+                                                : "Revisa los permisos de Android",
+                                    });
+                                }
+                            }}
                         />
                         <div css={css({ height: 1, background: "var(--lumo-border)" })} />
                         <Toggle
-                            label="Conexión disponible"
-                            description="Simula el estado de red"
-                            checked={connectionOk}
-                            onChange={(checked) =>
-                                dispatch({
-                                    type: "SET_CONNECTION",
-                                    payload: checked ? "online" : "offline",
-                                })
-                            }
+                            label="Protección de batería"
+                            description="Evita que Android detenga el seguimiento"
+                            checked={state.mobile?.batteryOptimizationDisabled ?? false}
+                            onChange={async () => {
+                                try {
+                                    await backend.openBatterySettings();
+                                } catch (requestError) {
+                                    setToast({
+                                        title: "No se han podido abrir los ajustes",
+                                        detail:
+                                            requestError instanceof Error
+                                                ? requestError.message
+                                                : "Inténtalo de nuevo",
+                                    });
+                                }
+                            }}
                         />
                     </article>
                     {state.group.role === "supervisor" && (
@@ -529,6 +547,27 @@ export function Tracker() {
                         }}
                     >
                         Avisar a {supervisorName}
+                    </Button>
+                    <Button
+                        variant="secondary"
+                        fullWidth
+                        icon={FiPhone}
+                        disabled={!state.group.supervisorPhone}
+                        onClick={async () => {
+                            try {
+                                await backend.openPhoneDialer(state.group.supervisorPhone);
+                            } catch (requestError) {
+                                setToast({
+                                    title: "No se ha podido preparar la llamada",
+                                    detail:
+                                        requestError instanceof Error
+                                            ? requestError.message
+                                            : "Revisa el número configurado",
+                                });
+                            }
+                        }}
+                    >
+                        Llamar a {supervisorName}
                     </Button>
                 </div>
             </Modal>
