@@ -4,6 +4,7 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY mobile/src-tauri ./mobile/src-tauri
+COPY plugins ./plugins
 RUN cargo build --locked --release -p lumo-api
 
 FROM debian:bookworm-slim
