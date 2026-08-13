@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use lumo_api::{build_app, config::ApiConfig};
 use lumo_core::{
-    application::ReportLocationInput,
+    application::{CreateGroupInput, ReportLocationInput},
     domain::{CommandStatus, RuntimeProfile},
 };
 use lumo_runtime::{FixedClock, LocalBackend, RemoteRepository};
@@ -59,6 +59,30 @@ async fn remote_repository_connects_controller_and_controlled_clients() {
         assert!(snapshot.commands.iter().any(|command| {
             command.id == command_id && command.status == CommandStatus::Completed
         }));
+
+        let previous_revision = snapshot.revision;
+        controller.reset().expect("reset remote state");
+        let empty = controller
+            .snapshot(RuntimeProfile::Controller)
+            .expect("empty remote snapshot");
+        assert!(empty.session.is_none());
+        assert!(empty.revision > previous_revision);
+
+        let recreated = controller
+            .create_group(
+                CreateGroupInput {
+                    name: "Familia".into(),
+                    supervisor_name: "Supervisor".into(),
+                    supervisor_phone: "+34600000001".into(),
+                    tracked_person_name: "Persona".into(),
+                    tracked_person_phone: "+34600000002".into(),
+                    pin: "123456".into(),
+                },
+                RuntimeProfile::Controller,
+            )
+            .expect("recreate remote group");
+        assert!(recreated.session.is_some());
+        assert!(recreated.revision > empty.revision);
     })
     .await
     .expect("blocking client task");

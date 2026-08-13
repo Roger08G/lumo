@@ -4,7 +4,7 @@ use super::{
     ControlledDevice, Group, GroupRole, Invitation, PendingCommand, PinGuard, Place, TimelineEvent,
 };
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,7 +53,9 @@ pub struct SessionView {
     pub group_name: String,
     pub group_code: String,
     pub supervisor_name: String,
+    pub supervisor_phone: String,
     pub tracked_person_name: String,
+    pub tracked_person_phone: String,
     pub role: GroupRole,
 }
 
@@ -81,7 +83,9 @@ impl RuntimeState {
                 group_name: group.name.clone(),
                 group_code: group.code.clone(),
                 supervisor_name: group.supervisor_name.clone(),
+                supervisor_phone: group.supervisor_phone.clone(),
                 tracked_person_name: group.tracked_person_name.clone(),
+                tracked_person_phone: group.tracked_person_phone.clone(),
                 role: match profile {
                     RuntimeProfile::Controlled => GroupRole::Member,
                     RuntimeProfile::Controller | RuntimeProfile::Debug => GroupRole::Supervisor,
