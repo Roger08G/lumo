@@ -1,6 +1,7 @@
 # Generated
 .next/
 node_modules/
+dist/
 bun.lock
 *.tsbuildinfo
 

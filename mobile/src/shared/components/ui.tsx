@@ -1,0 +1,570 @@
+import {
+    useEffect,
+    useLayoutEffect,
+    useRef,
+    useState,
+    type ButtonHTMLAttributes,
+    type InputHTMLAttributes,
+    type ReactNode,
+} from "react";
+import { css, keyframes, type CSSObject } from "@emotion/react";
+import type { IconType } from "react-icons";
+import { FiX } from "react-icons/fi";
+import gsap from "gsap";
+
+const spin = keyframes({
+    to: { transform: "rotate(360deg)" },
+});
+
+const toastIn = keyframes({
+    from: { opacity: 0, transform: "translate(-50%, 14px) scale(0.97)" },
+    to: { opacity: 1, transform: "translate(-50%, 0) scale(1)" },
+});
+
+export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
+
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+    variant?: ButtonVariant;
+    icon?: IconType;
+    fullWidth?: boolean;
+    loading?: boolean;
+}
+
+const buttonVariants: Record<ButtonVariant, CSSObject> = {
+    primary: {
+        color: "#fff",
+        background: "linear-gradient(135deg, var(--lumo-primary), #7c54c5)",
+        borderColor: "transparent",
+        boxShadow: "0 10px 24px rgba(104, 66, 166, 0.22)",
+        "&:hover:not(:disabled)": {
+            transform: "translateY(-1px)",
+            boxShadow: "0 13px 28px rgba(104,66,166,.27)",
+        },
+    },
+    secondary: {
+        color: "var(--lumo-primary)",
+        background: "#fff",
+        borderColor: "var(--lumo-border-strong)",
+        boxShadow: "0 4px 14px rgba(47, 38, 57, 0.04)",
+        "&:hover:not(:disabled)": { borderColor: "var(--lumo-accent)", background: "#fdfbff" },
+    },
+    ghost: {
+        color: "var(--lumo-text-secondary)",
+        background: "transparent",
+        borderColor: "transparent",
+        "&:hover:not(:disabled)": {
+            color: "var(--lumo-primary)",
+            background: "var(--lumo-lavender)",
+        },
+    },
+    danger: {
+        color: "#fff",
+        background: "var(--lumo-danger)",
+        borderColor: "transparent",
+        boxShadow: "0 9px 20px rgba(180,71,88,.16)",
+        "&:hover:not(:disabled)": { background: "#9f3849" },
+    },
+};
+
+export function Button({
+    variant = "primary",
+    icon: Icon,
+    fullWidth = false,
+    loading = false,
+    children,
+    disabled,
+    ...props
+}: ButtonProps) {
+    return (
+        <button
+            type="button"
+            disabled={disabled || loading}
+            css={css(
+                {
+                    minHeight: 52,
+                    width: fullWidth ? "100%" : "auto",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 9,
+                    padding: "0 20px",
+                    border: "1px solid",
+                    borderRadius: 15,
+                    fontSize: 15,
+                    fontWeight: 500,
+                    cursor: "pointer",
+                    transition:
+                        "transform .2s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease",
+                    "&:active:not(:disabled)": { transform: "translateY(1px)" },
+                    "&:disabled": { opacity: 0.55, cursor: "not-allowed", boxShadow: "none" },
+                },
+                buttonVariants[variant],
+            )}
+            {...props}
+        >
+            {loading ? (
+                <span
+                    aria-hidden="true"
+                    css={css({
+                        width: 17,
+                        height: 17,
+                        border: "2px solid currentColor",
+                        borderRightColor: "transparent",
+                        borderRadius: "50%",
+                        animation: `${spin} .7s linear infinite`,
+                    })}
+                />
+            ) : (
+                Icon && <Icon aria-hidden="true" size={18} />
+            )}
+            {children}
+        </button>
+    );
+}
+
+interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+    label: string;
+    icon: IconType;
+    badge?: number;
+}
+
+export function IconButton({ label, icon: Icon, badge, ...props }: IconButtonProps) {
+    return (
+        <button
+            type="button"
+            aria-label={label}
+            title={label}
+            css={css({
+                position: "relative",
+                width: 46,
+                height: 46,
+                display: "inline-grid",
+                placeItems: "center",
+                flex: "0 0 auto",
+                border: "1px solid var(--lumo-border)",
+                borderRadius: 15,
+                color: "var(--lumo-text)",
+                background: "rgba(255,255,255,.82)",
+                cursor: "pointer",
+                transition: "background .2s ease, transform .2s ease",
+                "&:hover": { background: "#fff", transform: "translateY(-1px)" },
+            })}
+            {...props}
+        >
+            <Icon size={20} aria-hidden="true" />
+            {Boolean(badge) && (
+                <span
+                    css={css({
+                        position: "absolute",
+                        top: -4,
+                        right: -4,
+                        minWidth: 19,
+                        height: 19,
+                        display: "grid",
+                        placeItems: "center",
+                        padding: "0 5px",
+                        border: "2px solid var(--lumo-bg)",
+                        borderRadius: 10,
+                        color: "#fff",
+                        background: "var(--lumo-danger)",
+                        fontSize: 10,
+                        lineHeight: 1,
+                    })}
+                >
+                    {Math.min(badge ?? 0, 9)}
+                </span>
+            )}
+        </button>
+    );
+}
+
+interface FieldProps extends InputHTMLAttributes<HTMLInputElement> {
+    label: string;
+    icon?: IconType;
+    trailing?: ReactNode;
+    error?: string;
+}
+
+export function Field({ label, icon: Icon, trailing, error, id, ...props }: FieldProps) {
+    return (
+        <label
+            htmlFor={id}
+            css={css({ display: "grid", gap: 7, color: "var(--lumo-text)", fontSize: 13 })}
+        >
+            <span>{label}</span>
+            <span
+                css={css({
+                    minHeight: 52,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "0 14px",
+                    border: `1px solid ${error ? "var(--lumo-danger)" : "var(--lumo-border)"}`,
+                    borderRadius: 15,
+                    background: "rgba(255,255,255,.86)",
+                    transition: "border-color .2s ease, box-shadow .2s ease, background .2s ease",
+                    "&:focus-within": {
+                        borderColor: error ? "var(--lumo-danger)" : "var(--lumo-primary)",
+                        boxShadow: error
+                            ? "0 0 0 3px rgba(180,71,88,.1)"
+                            : "0 0 0 3px rgba(104,66,166,.1)",
+                        background: "#fff",
+                    },
+                })}
+            >
+                {Icon && <Icon size={18} color="var(--lumo-text-muted)" aria-hidden="true" />}
+                <input
+                    id={id}
+                    css={css({
+                        width: "100%",
+                        minWidth: 0,
+                        border: 0,
+                        outline: 0,
+                        color: "var(--lumo-text)",
+                        background: "transparent",
+                        fontSize: 15,
+                        "&::placeholder": { color: "#9b94a1" },
+                    })}
+                    aria-invalid={Boolean(error)}
+                    {...props}
+                />
+                {trailing}
+            </span>
+            {error && (
+                <span role="alert" css={css({ color: "var(--lumo-danger)", fontSize: 12 })}>
+                    {error}
+                </span>
+            )}
+        </label>
+    );
+}
+
+interface ModalProps {
+    open: boolean;
+    onClose: () => void;
+    title: string;
+    eyebrow?: string;
+    children: ReactNode;
+    compact?: boolean;
+}
+
+export function Modal({ open, onClose, title, eyebrow, children, compact = false }: ModalProps) {
+    const [mounted, setMounted] = useState(open);
+    const backdropRef = useRef<HTMLDivElement>(null);
+    const panelRef = useRef<HTMLElement>(null);
+    const closeRef = useRef(onClose);
+    const contentRef = useRef({ title, eyebrow, children });
+
+    if (open) contentRef.current = { title, eyebrow, children };
+    const modalContent = contentRef.current;
+
+    useLayoutEffect(() => {
+        closeRef.current = onClose;
+    }, [onClose]);
+
+    useLayoutEffect(() => {
+        const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+        if (open) {
+            setMounted(true);
+            return;
+        }
+
+        if (!mounted) return;
+        if (reduceMotion || !backdropRef.current || !panelRef.current) {
+            setMounted(false);
+            return;
+        }
+
+        const timeline = gsap.timeline({
+            onComplete: () => setMounted(false),
+            defaults: { overwrite: true },
+        });
+        timeline.to(panelRef.current, { y: 28, opacity: 0, duration: 0.2, ease: "power2.in" });
+        timeline.to(
+            backdropRef.current,
+            { opacity: 0, duration: 0.16, ease: "power1.out" },
+            "-=0.12",
+        );
+
+        return () => {
+            timeline.kill();
+        };
+    }, [open, mounted]);
+
+    useEffect(() => {
+        if (!mounted || !open || !backdropRef.current || !panelRef.current) return;
+        const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (reduceMotion) {
+            gsap.set([backdropRef.current, panelRef.current], { clearProps: "all" });
+            return;
+        }
+
+        const timeline = gsap.timeline({ defaults: { overwrite: true } });
+        timeline.fromTo(
+            backdropRef.current,
+            { opacity: 0 },
+            { opacity: 1, duration: 0.24, ease: "power1.out" },
+        );
+        timeline.fromTo(
+            panelRef.current,
+            { y: 34, opacity: 0, scale: 0.985 },
+            { y: 0, opacity: 1, scale: 1, duration: 0.4, ease: "power3.out" },
+            "-=0.16",
+        );
+
+        return () => {
+            timeline.kill();
+        };
+    }, [mounted, open]);
+
+    useEffect(() => {
+        if (!mounted) return;
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") closeRef.current();
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [mounted]);
+
+    if (!mounted) return null;
+
+    return (
+        <div
+            ref={backdropRef}
+            role="presentation"
+            onMouseDown={(event) => {
+                if (event.target === event.currentTarget) closeRef.current();
+            }}
+            css={css({
+                position: "fixed",
+                inset: 0,
+                zIndex: 50,
+                display: "flex",
+                alignItems: "flex-end",
+                justifyContent: "center",
+                padding:
+                    "20px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left))",
+                background: "rgba(34, 28, 40, .38)",
+                backdropFilter: "blur(8px)",
+                "@media (min-width: 540px)": { alignItems: "center", padding: 24 },
+            })}
+        >
+            <section
+                ref={panelRef}
+                role="dialog"
+                aria-modal="true"
+                aria-label={modalContent.title}
+                css={css({
+                    width: "min(100%, 460px)",
+                    maxHeight: "min(88dvh, 760px)",
+                    overflowY: "auto",
+                    padding: compact ? "20px" : "24px 20px max(24px, env(safe-area-inset-bottom))",
+                    border: "1px solid rgba(255,255,255,.8)",
+                    borderRadius: "26px 26px 0 0",
+                    background: "#fff",
+                    boxShadow: "0 -20px 60px rgba(37,29,48,.2)",
+                    "@media (min-width: 540px)": { borderRadius: 26, padding: compact ? 20 : 24 },
+                })}
+            >
+                <header
+                    css={css({
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        gap: 16,
+                        marginBottom: 20,
+                    })}
+                >
+                    <div>
+                        {modalContent.eyebrow && (
+                            <p
+                                css={css({
+                                    marginBottom: 5,
+                                    color: "var(--lumo-primary)",
+                                    fontSize: 11,
+                                    letterSpacing: ".09em",
+                                    textTransform: "uppercase",
+                                })}
+                            >
+                                {modalContent.eyebrow}
+                            </p>
+                        )}
+                        <h2 css={css({ color: "var(--lumo-text)", fontSize: 21, lineHeight: 1.2 })}>
+                            {modalContent.title}
+                        </h2>
+                    </div>
+                    <IconButton label="Cerrar" icon={FiX} onClick={onClose} />
+                </header>
+                {modalContent.children}
+            </section>
+        </div>
+    );
+}
+
+interface ToggleProps {
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+    label: string;
+    description?: string;
+}
+
+export function Toggle({ checked, onChange, label, description }: ToggleProps) {
+    return (
+        <label
+            css={css({
+                minHeight: 58,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 16,
+                cursor: "pointer",
+            })}
+        >
+            <span css={css({ display: "grid", gap: 3 })}>
+                <span css={css({ color: "var(--lumo-text)", fontSize: 15 })}>{label}</span>
+                {description && (
+                    <span
+                        css={css({
+                            color: "var(--lumo-text-muted)",
+                            fontSize: 12,
+                            lineHeight: 1.4,
+                        })}
+                    >
+                        {description}
+                    </span>
+                )}
+            </span>
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={(event) => onChange(event.target.checked)}
+                css={css({
+                    width: 46,
+                    height: 27,
+                    flex: "0 0 auto",
+                    appearance: "none",
+                    border: "2px solid transparent",
+                    borderRadius: 20,
+                    background: checked ? "var(--lumo-primary)" : "#d9d4dc",
+                    cursor: "pointer",
+                    transition: "background .2s ease",
+                    "&::after": {
+                        content: '""',
+                        display: "block",
+                        width: 21,
+                        height: 21,
+                        margin: 1,
+                        borderRadius: "50%",
+                        background: "#fff",
+                        boxShadow: "0 2px 5px rgba(0,0,0,.18)",
+                        transform: checked ? "translateX(19px)" : "translateX(0)",
+                        transition: "transform .2s ease",
+                    },
+                })}
+            />
+        </label>
+    );
+}
+
+interface ToastProps {
+    title: string;
+    detail?: string;
+    onClose?: () => void;
+}
+
+export function Toast({ title, detail, onClose }: ToastProps) {
+    useEffect(() => {
+        if (!onClose) return;
+        const timeout = window.setTimeout(onClose, 3200);
+        return () => window.clearTimeout(timeout);
+    }, [onClose, title, detail]);
+
+    return (
+        <div
+            role="status"
+            aria-live="polite"
+            css={css({
+                position: "fixed",
+                zIndex: 70,
+                left: "50%",
+                bottom: "max(92px, calc(env(safe-area-inset-bottom) + 78px))",
+                width: "min(calc(100% - 32px), 420px)",
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 12,
+                padding: "14px 16px",
+                border: "1px solid rgba(255,255,255,.14)",
+                borderRadius: 17,
+                color: "#fff",
+                background: "rgba(45, 36, 56, .96)",
+                boxShadow: "0 16px 40px rgba(34,26,44,.28)",
+                animation: `${toastIn} .28s ease both`,
+            })}
+        >
+            <span css={css({ display: "grid", gap: 3 })}>
+                <strong css={css({ fontSize: 14, fontWeight: 500 })}>{title}</strong>
+                {detail && <span css={css({ color: "#d8d2dc", fontSize: 12 })}>{detail}</span>}
+            </span>
+            {onClose && (
+                <button
+                    type="button"
+                    aria-label="Cerrar aviso"
+                    onClick={onClose}
+                    css={css({
+                        display: "grid",
+                        placeItems: "center",
+                        width: 30,
+                        height: 30,
+                        flex: "0 0 auto",
+                        border: 0,
+                        borderRadius: 10,
+                        color: "#fff",
+                        background: "rgba(255,255,255,.1)",
+                        cursor: "pointer",
+                    })}
+                >
+                    <FiX aria-hidden="true" />
+                </button>
+            )}
+        </div>
+    );
+}
+
+export function Pill({
+    children,
+    tone = "purple",
+}: {
+    children: ReactNode;
+    tone?: "purple" | "green" | "amber" | "neutral";
+}) {
+    const colors = {
+        purple: ["var(--lumo-lavender)", "var(--lumo-primary)"],
+        green: ["var(--lumo-success-soft)", "var(--lumo-success)"],
+        amber: ["var(--lumo-warning-soft)", "var(--lumo-warning)"],
+        neutral: ["#efedf0", "var(--lumo-text-secondary)"],
+    }[tone];
+
+    return (
+        <span
+            css={css({
+                minHeight: 26,
+                width: "fit-content",
+                maxWidth: "100%",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "4px 10px",
+                borderRadius: 999,
+                color: colors[1],
+                background: colors[0],
+                fontSize: 11,
+                lineHeight: 1.2,
+                whiteSpace: "nowrap",
+            })}
+        >
+            {children}
+        </span>
+    );
+}
