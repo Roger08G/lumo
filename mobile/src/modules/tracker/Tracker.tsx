@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { css, keyframes } from "@emotion/react";
 import {
     FiAlertTriangle,
@@ -90,13 +90,14 @@ function CheckRow({ icon: Icon, title, detail, ok }: CheckRowProps) {
 }
 
 export function Tracker() {
-    const { state, dispatch } = useLumo();
+    const { state, dispatch, backend } = useLumo();
     const [pinOpen, setPinOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [helpOpen, setHelpOpen] = useState(false);
     const [securityAction, setSecurityAction] = useState<GroupSecurityAction | null>(null);
     const [pin, setPin] = useState("");
     const [pinError, setPinError] = useState("");
+    const [unlocking, setUnlocking] = useState(false);
     const [toast, setToast] = useState<{ title: string; detail?: string } | null>(null);
     const permissionOk = state.demo.permission === "granted";
     const connectionOk = state.demo.connection === "online";
@@ -111,16 +112,49 @@ export function Tracker() {
             ? "No hay conexión disponible. Lumo lo intentará de nuevo automáticamente."
             : "La batería está baja. Conecta este teléfono para mantener la protección activa.";
 
-    const unlock = () => {
-        if (pin !== state.group.pin) {
-            setPinError("El PIN del grupo no es correcto");
-            return;
+    const unlock = async () => {
+        setUnlocking(true);
+        try {
+            await backend.verifyPin(pin);
+            setPinOpen(false);
+            setPin("");
+            setPinError("");
+            window.setTimeout(() => setSettingsOpen(true), 220);
+        } catch (requestError) {
+            setPinError(
+                requestError instanceof Error ? requestError.message : "El PIN no es correcto",
+            );
+        } finally {
+            setUnlocking(false);
         }
-        setPinOpen(false);
-        setPin("");
-        setPinError("");
-        window.setTimeout(() => setSettingsOpen(true), 220);
     };
+
+    useEffect(() => {
+        if (!backend.isMobileNative()) return;
+        let active = true;
+        const synchronizeLocation = async () => {
+            try {
+                await backend.processPending();
+                const position = await backend.captureLocation();
+                if (!position) return;
+                const snapshot = await backend.reportLocation(
+                    position.coords.latitude,
+                    position.coords.longitude,
+                    position.coords.accuracy,
+                    state.demo.battery,
+                );
+                if (active && snapshot) dispatch({ type: "HYDRATE_BACKEND", payload: snapshot });
+            } catch {
+                // The synchronized snapshot keeps the last known location until the next retry.
+            }
+        };
+        void synchronizeLocation();
+        const interval = window.setInterval(synchronizeLocation, 30_000);
+        return () => {
+            active = false;
+            window.clearInterval(interval);
+        };
+    }, [backend, dispatch, state.demo.battery]);
 
     const openSecurity = (action: GroupSecurityAction) => {
         setSettingsOpen(false);
@@ -348,7 +382,13 @@ export function Tracker() {
                             if (event.key === "Enter") unlock();
                         }}
                     />
-                    <Button fullWidth icon={FiLock} disabled={pin.length !== 6} onClick={unlock}>
+                    <Button
+                        fullWidth
+                        icon={FiLock}
+                        disabled={pin.length !== 6}
+                        loading={unlocking}
+                        onClick={unlock}
+                    >
                         Abrir ajustes
                     </Button>
                 </div>
@@ -461,18 +501,31 @@ export function Tracker() {
                             lineHeight: 1.55,
                         })}
                     >
-                        En la versión real, {supervisorName} recibiría un aviso prioritario con la
-                        última ubicación disponible.
+                        {supervisorName} recibirá un aviso prioritario con la última ubicación
+                        disponible.
                     </p>
                     <Button
                         fullWidth
                         icon={FiHeart}
-                        onClick={() => {
-                            setHelpOpen(false);
-                            setToast({
-                                title: "Aviso enviado",
-                                detail: `${supervisorName} sabría que necesitas ayuda`,
-                            });
+                        onClick={async () => {
+                            try {
+                                const snapshot = await backend.sendHelp();
+                                if (snapshot)
+                                    dispatch({ type: "HYDRATE_BACKEND", payload: snapshot });
+                                setHelpOpen(false);
+                                setToast({
+                                    title: "Aviso enviado",
+                                    detail: `${supervisorName} recibirá tu solicitud de ayuda`,
+                                });
+                            } catch (requestError) {
+                                setToast({
+                                    title: "No se ha podido enviar",
+                                    detail:
+                                        requestError instanceof Error
+                                            ? requestError.message
+                                            : "Inténtalo de nuevo",
+                                });
+                            }
                         }}
                     >
                         Avisar a {supervisorName}

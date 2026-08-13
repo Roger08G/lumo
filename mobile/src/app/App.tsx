@@ -53,7 +53,7 @@ function Splash() {
 }
 
 function AppContent() {
-    const { state, dispatch } = useLumo();
+    const { state, dispatch, backend } = useLumo();
     const [booting, setBooting] = useState(true);
 
     useEffect(() => {
@@ -65,7 +65,21 @@ function AppContent() {
     if (booting) return <Splash />;
 
     if (!state.group.active) {
-        return <GroupAccess onEnter={(payload) => dispatch({ type: "ENTER_GROUP", payload })} />;
+        return (
+            <GroupAccess
+                onEnter={async (payload) => {
+                    const snapshot =
+                        payload.role === "supervisor"
+                            ? await backend.createGroup(payload)
+                            : await backend.joinGroup(payload.inviteToken ?? "", payload.pin);
+                    dispatch(
+                        snapshot
+                            ? { type: "HYDRATE_BACKEND", payload: snapshot }
+                            : { type: "ENTER_GROUP", payload },
+                    );
+                }}
+            />
+        );
     }
 
     if (!state.mode) {

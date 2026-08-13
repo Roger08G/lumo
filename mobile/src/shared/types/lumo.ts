@@ -24,7 +24,6 @@ export interface GroupState {
     active: boolean;
     name: string;
     code: string;
-    pin: string;
     userName: string;
     supervisorName: string;
     trackedPersonName: string;
@@ -100,6 +99,16 @@ export interface GroupEntryPayload {
     trackedPersonName: string;
     role: GroupRole;
     entry: "created" | "joined";
+    inviteToken?: string;
+}
+
+export interface BackendHydration {
+    group: GroupState;
+    mode: AppMode | null;
+    demo: DemoState;
+    places: Place[];
+    events: TimelineEvent[];
+    trackerSetupComplete: boolean;
 }
 
 export type DebugScenario =
@@ -107,7 +116,8 @@ export type DebugScenario =
 
 export type LumoAction =
     | { type: "ENTER_GROUP"; payload: GroupEntryPayload }
-    | { type: "LEAVE_GROUP"; payload: { pin: string } }
+    | { type: "LEAVE_GROUP" }
+    | { type: "HYDRATE_BACKEND"; payload: BackendHydration }
     | { type: "SET_MODE"; payload: AppMode | null }
     | {
           type: "SET_TRACKER_CONSENT";

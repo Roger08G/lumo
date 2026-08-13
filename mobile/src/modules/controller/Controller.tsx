@@ -878,14 +878,15 @@ function PlaceModal({
     onSaved: (editing: boolean) => void;
     onDelete: (place: Place) => void;
 }) {
-    const { state, dispatch } = useLumo();
+    const { state, dispatch, backend } = useLumo();
     const [step, setStep] = useState<0 | 1>(0);
     const [name, setName] = useState("");
     const [address, setAddress] = useState("");
-    const [coordinates, setCoordinates] = useState("40.4168, -3.7038");
+    const [coordinates, setCoordinates] = useState("");
     const [icon, setIcon] = useState<PlaceIcon>("pin");
     const [color, setColor] = useState<PlaceTone>("purple");
     const [error, setError] = useState("");
+    const [saving, setSaving] = useState(false);
     const editing = Boolean(place);
 
     useEffect(() => {
@@ -893,10 +894,11 @@ function PlaceModal({
         setStep(0);
         setName(place?.name ?? "");
         setAddress(place?.address ?? "");
-        setCoordinates(place?.coordinates ?? "40.4168, -3.7038");
+        setCoordinates(place?.coordinates ?? "");
         setIcon(place?.icon ?? "pin");
         setColor(place?.color ?? randomPlaceTone(state.places[state.places.length - 1]?.color));
         setError("");
+        setSaving(false);
     }, [open, place]);
 
     const kindForIcon = (selectedIcon: PlaceIcon): Place["kind"] => {
@@ -906,7 +908,7 @@ function PlaceModal({
         return "place";
     };
 
-    const save = (event: FormEvent) => {
+    const save = async (event: FormEvent) => {
         event.preventDefault();
         if (step === 0) {
             if (
@@ -933,12 +935,23 @@ function PlaceModal({
             icon,
         };
 
-        dispatch({
-            type: editing ? "UPDATE_PLACE" : "ADD_PLACE",
-            payload: nextPlace,
-        });
-        onClose();
-        onSaved(editing);
+        try {
+            setSaving(true);
+            const savedPlace = await backend.savePlace(nextPlace, editing);
+            dispatch({
+                type: editing ? "UPDATE_PLACE" : "ADD_PLACE",
+                payload: savedPlace,
+            });
+            onClose();
+            onSaved(editing);
+        } catch (requestError) {
+            setError(
+                requestError instanceof Error
+                    ? requestError.message
+                    : "No se ha podido guardar el lugar",
+            );
+            setSaving(false);
+        }
     };
 
     const SelectedIcon = placeIcons[icon];
@@ -959,7 +972,7 @@ function PlaceModal({
                         <Field
                             autoFocus
                             label="Nombre del lugar"
-                            placeholder="Por ejemplo, Farmacia"
+                            placeholder="Nombre del lugar"
                             icon={FiMapPin}
                             value={name}
                             onChange={(event) => {
@@ -969,7 +982,7 @@ function PlaceModal({
                         />
                         <Field
                             label="Dirección exacta"
-                            placeholder="Calle, número y localidad"
+                            placeholder="Dirección exacta"
                             icon={FiHome}
                             value={address}
                             onChange={(event) => {
@@ -979,7 +992,7 @@ function PlaceModal({
                         />
                         <Field
                             label="Coordenadas"
-                            placeholder="40.4168, -3.7038"
+                            placeholder="Latitud, longitud"
                             icon={FiCrosshair}
                             value={coordinates}
                             onChange={(event) => {
@@ -1156,7 +1169,12 @@ function PlaceModal({
                             Atrás
                         </Button>
                     )}
-                    <Button type="submit" fullWidth icon={step === 1 ? FiCheck : undefined}>
+                    <Button
+                        type="submit"
+                        fullWidth
+                        icon={step === 1 ? FiCheck : undefined}
+                        loading={saving}
+                    >
                         {step === 0 ? "Continuar" : editing ? "Guardar cambios" : "Crear lugar"}
                     </Button>
                 </div>
@@ -1186,7 +1204,7 @@ function PlaceModal({
 }
 
 export function Controller() {
-    const { state, dispatch } = useLumo();
+    const { state, dispatch, backend } = useLumo();
     const [activeTab, setActiveTab] = useState<ControllerTab>("home");
     const [locating, setLocating] = useState(false);
     const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -1200,9 +1218,27 @@ export function Controller() {
         [state.events],
     );
 
-    const locate = () => {
+    const locate = async () => {
         if (locating) return;
         setLocating(true);
+        try {
+            const accepted = await backend.requestLocation();
+            if (accepted) {
+                setLocating(false);
+                setToast({
+                    title: "Solicitud enviada",
+                    detail: "El otro teléfono actualizará su ubicación en cuanto responda",
+                });
+                return;
+            }
+        } catch (requestError) {
+            setLocating(false);
+            setToast({
+                title: "No se ha podido localizar",
+                detail: requestError instanceof Error ? requestError.message : "Inténtalo de nuevo",
+            });
+            return;
+        }
         window.setTimeout(
             () => {
                 dispatch({ type: "FINISH_LOCATE" });
@@ -1216,9 +1252,18 @@ export function Controller() {
         );
     };
 
-    const openNotifications = () => {
+    const openNotifications = async () => {
         setNotificationsOpen(true);
-        dispatch({ type: "MARK_EVENTS_READ" });
+        try {
+            const snapshot = await backend.markEventsRead();
+            dispatch(
+                snapshot
+                    ? { type: "HYDRATE_BACKEND", payload: snapshot }
+                    : { type: "MARK_EVENTS_READ" },
+            );
+        } catch {
+            // Opening the panel remains useful with the last synchronized events.
+        }
     };
 
     const changeTab = (tab: ControllerTab) => {
@@ -1375,9 +1420,14 @@ export function Controller() {
                 confirmLabel={deletingPlace ? "Eliminar lugar" : "Continuar al selector"}
                 icon={deletingPlace ? FiTrash2 : FiSliders}
                 variant={deletingPlace ? "danger" : "primary"}
-                onConfirm={() => {
+                onConfirm={async (pin) => {
                     if (deletingPlace) {
-                        dispatch({ type: "DELETE_PLACE", payload: { id: deletingPlace.id } });
+                        const snapshot = await backend.deletePlace(deletingPlace.id, pin);
+                        dispatch(
+                            snapshot
+                                ? { type: "HYDRATE_BACKEND", payload: snapshot }
+                                : { type: "DELETE_PLACE", payload: { id: deletingPlace.id } },
+                        );
                         setSelectedPlace(null);
                         setToast({
                             title: "Lugar eliminado",

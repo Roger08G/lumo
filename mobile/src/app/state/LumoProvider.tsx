@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useReducer, type ReactNode } from "react";
 
 import { LumoContext } from "@app/state/lumoContext.ts";
+import { lumoBackend } from "@shared/services/lumoBackend.ts";
 
 import type {
     DebugScenario,
@@ -27,7 +28,6 @@ const EMPTY_GROUP: GroupState = {
     active: false,
     name: "",
     code: "",
-    pin: "",
     userName: "",
     supervisorName: "",
     trackedPersonName: "",
@@ -39,7 +39,7 @@ const DEFAULT_PLACES: Place[] = [
     {
         id: "home",
         name: "Casa",
-        address: "Calle de la Luz, 18",
+        address: "Dirección principal",
         coordinates: "40.4168, -3.7038",
         radius: 120,
         kind: "home",
@@ -49,7 +49,7 @@ const DEFAULT_PLACES: Place[] = [
     {
         id: "supermarket",
         name: "Supermercado",
-        address: "Avenida del Parque, 24",
+        address: "Dirección habitual",
         coordinates: "40.4191, -3.7072",
         radius: 90,
         kind: "shop",
@@ -59,7 +59,7 @@ const DEFAULT_PLACES: Place[] = [
     {
         id: "medical",
         name: "Centro médico",
-        address: "Plaza Mayor, 3",
+        address: "Dirección sanitaria",
         coordinates: "40.4154, -3.7061",
         radius: 100,
         kind: "medical",
@@ -161,22 +161,37 @@ function createInitialState(): LumoState {
     localStorage.removeItem("lumo.session");
     sessionStorage.removeItem("lumo.session");
 
-    const storedGroup = readStored<GroupState>(localStorage, STORAGE_KEYS.group, EMPTY_GROUP);
-    const group = /^\d{6}$/.test(storedGroup.pin ?? "")
-        ? {
-              ...storedGroup,
-              userName:
-                  storedGroup.userName ||
-                  (storedGroup.entry === "joined" ? "Miembro" : "Supervisor"),
-              supervisorName:
-                  storedGroup.supervisorName ||
-                  (storedGroup.entry === "joined"
-                      ? "Supervisor"
-                      : storedGroup.userName || "Supervisor"),
-              trackedPersonName: storedGroup.trackedPersonName || "Abuelo",
-              role: storedGroup.role || (storedGroup.entry === "joined" ? "member" : "supervisor"),
-          }
-        : EMPTY_GROUP;
+    const storedSchema = readStored<number>(localStorage, STORAGE_KEYS.schema, 0);
+    if (storedSchema < 8) {
+        Object.values(STORAGE_KEYS).forEach((key) => localStorage.removeItem(key));
+        localStorage.removeItem("lumo.preview-invite");
+        return fallback;
+    }
+
+    const storedGroup = readStored<GroupState & { pin?: string }>(
+        localStorage,
+        STORAGE_KEYS.group,
+        EMPTY_GROUP,
+    );
+    const { pin: _legacyPin, ...storedGroupWithoutPin } = storedGroup;
+    const group =
+        storedGroup.active && storedGroup.name && storedGroup.code
+            ? {
+                  ...storedGroupWithoutPin,
+                  userName:
+                      storedGroup.userName ||
+                      (storedGroup.entry === "joined" ? "Miembro" : "Supervisor"),
+                  supervisorName:
+                      storedGroup.supervisorName ||
+                      (storedGroup.entry === "joined"
+                          ? "Supervisor"
+                          : storedGroup.userName || "Supervisor"),
+                  trackedPersonName: storedGroup.trackedPersonName || "Persona acompañada",
+                  role:
+                      storedGroup.role ||
+                      (storedGroup.entry === "joined" ? "member" : "supervisor"),
+              }
+            : EMPTY_GROUP;
     const storedMode = readStored<LumoState["mode"]>(localStorage, STORAGE_KEYS.mode, null);
     const storedPlaces = readStored<Place[]>(localStorage, STORAGE_KEYS.places, fallback.places);
     const placeColors: Place["color"][] = ["purple", "yellow", "green", "blue", "pink"];
@@ -356,10 +371,11 @@ function applyScenario(state: LumoState, scenario: DebugScenario): LumoState {
 
 function reducer(state: LumoState, action: LumoAction): LumoState {
     switch (action.type) {
-        case "ENTER_GROUP":
+        case "ENTER_GROUP": {
+            const { pin: _pin, inviteToken: _inviteToken, ...group } = action.payload;
             return {
                 ...state,
-                group: { active: true, ...action.payload },
+                group: { active: true, ...group },
                 mode: action.payload.role === "supervisor" ? "controller" : "tracker",
                 preferences:
                     action.payload.role === "member"
@@ -374,9 +390,30 @@ function reducer(state: LumoState, action: LumoAction): LumoState {
                           }
                         : state.preferences,
             };
+        }
         case "LEAVE_GROUP":
-            if (action.payload.pin !== state.group.pin) return state;
             return { ...state, group: EMPTY_GROUP, mode: null };
+        case "HYDRATE_BACKEND":
+            return {
+                ...state,
+                group:
+                    state.group.active && action.payload.group.active
+                        ? {
+                              ...action.payload.group,
+                              userName: state.group.userName,
+                              role: state.group.role,
+                              entry: state.group.entry,
+                          }
+                        : action.payload.group,
+                mode: action.payload.mode,
+                demo: action.payload.demo,
+                places: action.payload.places,
+                events: recentEvents(action.payload.events),
+                preferences: {
+                    ...state.preferences,
+                    trackerSetupComplete: action.payload.trackerSetupComplete,
+                },
+            };
         case "SET_MODE":
             return { ...state, mode: action.payload };
         case "SET_TRACKER_CONSENT":
@@ -461,7 +498,7 @@ export function LumoProvider({ children }: { children: ReactNode }) {
     const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
 
     useEffect(() => {
-        writeStored(localStorage, STORAGE_KEYS.schema, 6);
+        writeStored(localStorage, STORAGE_KEYS.schema, 8);
         writeStored(localStorage, STORAGE_KEYS.mode, state.mode);
         writeStored(localStorage, STORAGE_KEYS.demo, state.demo);
         writeStored(localStorage, STORAGE_KEYS.places, state.places);
@@ -483,7 +520,34 @@ export function LumoProvider({ children }: { children: ReactNode }) {
         return () => window.clearInterval(interval);
     }, []);
 
-    const value = useMemo(() => ({ state, dispatch }), [state]);
+    useEffect(() => {
+        if (!lumoBackend.isNative()) return;
+        let active = true;
+        const synchronize = async () => {
+            try {
+                const snapshot = await lumoBackend.bootstrap(state.mode);
+                if (active && snapshot) {
+                    dispatch({
+                        type: "HYDRATE_BACKEND",
+                        payload:
+                            state.group.active && state.mode === null
+                                ? { ...snapshot, mode: null }
+                                : snapshot,
+                    });
+                }
+            } catch {
+                // Preserve the last confirmed view during a temporary network interruption.
+            }
+        };
+        void synchronize();
+        const interval = window.setInterval(synchronize, 5_000);
+        return () => {
+            active = false;
+            window.clearInterval(interval);
+        };
+    }, [state.group.active, state.mode]);
+
+    const value = useMemo(() => ({ state, dispatch, backend: lumoBackend }), [state]);
 
     return <LumoContext.Provider value={value}>{children}</LumoContext.Provider>;
 }

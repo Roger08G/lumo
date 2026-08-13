@@ -84,16 +84,28 @@ const tones = {
 };
 
 export function DebugLab() {
-    const { state, dispatch } = useLumo();
+    const { state, dispatch, backend } = useLumo();
     const [toast, setToast] = useState<{ title: string; detail?: string } | null>(null);
     const [resetOpen, setResetOpen] = useState(false);
 
-    const runScenario = (scenario: ScenarioOption) => {
-        dispatch({ type: "APPLY_SCENARIO", payload: scenario.id });
-        setToast({
-            title: `${scenario.title} aplicado`,
-            detail: "El controlador y el historial ya reflejan este estado",
-        });
+    const runScenario = async (scenario: ScenarioOption) => {
+        try {
+            const snapshot = await backend.applyDebugScenario(scenario.id);
+            dispatch(
+                snapshot
+                    ? { type: "HYDRATE_BACKEND", payload: snapshot }
+                    : { type: "APPLY_SCENARIO", payload: scenario.id },
+            );
+            setToast({
+                title: `${scenario.title} aplicado`,
+                detail: "El controlador y el historial ya reflejan este estado",
+            });
+        } catch (requestError) {
+            setToast({
+                title: "No se ha podido aplicar",
+                detail: requestError instanceof Error ? requestError.message : "Inténtalo de nuevo",
+            });
+        }
     };
 
     return (
