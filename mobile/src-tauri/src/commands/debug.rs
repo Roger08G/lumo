@@ -1,0 +1,16 @@
+use lumo_core::domain::AppSnapshot;
+use lumo_runtime::simulation::SimulationScenario;
+use tauri::State;
+
+use crate::state::BackendState;
+
+use super::error::{run_blocking, CommandResult};
+
+#[tauri::command]
+pub async fn debug_apply_scenario(
+    state: State<'_, BackendState>,
+    scenario: SimulationScenario,
+) -> CommandResult<AppSnapshot> {
+    let backend = state.0.clone();
+    run_blocking(move || backend.debug_scenario(scenario).map_err(Into::into)).await
+}

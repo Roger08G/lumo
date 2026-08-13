@@ -25,4 +25,4 @@ dist-ssr
 
 gen/
 target/
-Cargo.lock
+/src-tauri/Cargo.lock

@@ -1,0 +1,21 @@
+[package]
+name = "lumo-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+axum.workspace = true
+axum-server.workspace = true
+dotenvy.workspace = true
+lumo-core = { path = "../lumo-core" }
+lumo-protocol = { path = "../lumo-protocol" }
+rusqlite.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tower.workspace = true

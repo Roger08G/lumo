@@ -1,0 +1,46 @@
+[package]
+name = "lumo-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+autobins = false
+
+[features]
+default = []
+local-tools = ["dep:clap"]
+
+[dependencies]
+base64.workspace = true
+clap = { workspace = true, optional = true }
+dotenvy.workspace = true
+lumo-core = { path = "../lumo-core" }
+lumo-protocol = { path = "../lumo-protocol" }
+rand.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+lumo-api = { path = "../lumo-api" }
+tempfile.workspace = true
+tokio.workspace = true
+
+[[bin]]
+name = "lumo-controller"
+path = "src/bin/lumo-controller.rs"
+required-features = ["local-tools"]
+
+[[bin]]
+name = "lumo-controlled"
+path = "src/bin/lumo-controlled.rs"
+required-features = ["local-tools"]
+
+[[bin]]
+name = "lumo-debug"
+path = "src/bin/lumo-debug.rs"
+required-features = ["local-tools"]
