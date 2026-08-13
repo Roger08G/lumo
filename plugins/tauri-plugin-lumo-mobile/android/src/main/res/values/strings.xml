@@ -1,0 +1,12 @@
+<resources>
+    <string name="lumo_tracking_channel">Seguimiento de ubicación</string>
+    <string name="lumo_sync_channel">Sincronización de avisos</string>
+    <string name="lumo_alerts_channel">Avisos de Lumo</string>
+    <string name="lumo_urgent_channel">Avisos urgentes de Lumo</string>
+    <string name="lumo_tracking_title">Lumo está compartiendo tu ubicación</string>
+    <string name="lumo_tracking_body">Seguimiento activo para tu grupo</string>
+    <string name="lumo_sync_title">Lumo está comprobando avisos</string>
+    <string name="lumo_sync_body">Las notificaciones del grupo están activas</string>
+    <string name="lumo_reopen_title">Abre Lumo para reactivar los avisos</string>
+    <string name="lumo_reopen_body">Android necesita que abras la aplicación después del reinicio</string>
+</resources>

@@ -5,6 +5,7 @@ members = [
     "crates/lumo-protocol",
     "crates/lumo-runtime",
     "mobile/src-tauri",
+    "plugins/tauri-plugin-lumo-mobile",
 ]
 resolver = "2"
 

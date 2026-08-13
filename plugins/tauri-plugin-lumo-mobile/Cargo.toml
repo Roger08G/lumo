@@ -1,0 +1,21 @@
+[package]
+name = "tauri-plugin-lumo-mobile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Android foreground tracking and device integration for Lumo"
+links = "tauri-plugin-lumo-mobile"
+build = "build.rs"
+
+[lib]
+name = "tauri_plugin_lumo_mobile"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true
+tauri = { version = "2", default-features = false }
+thiserror.workspace = true
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

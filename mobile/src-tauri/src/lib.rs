@@ -1,5 +1,6 @@
 mod commands;
 mod device;
+mod mobile;
 mod state;
 
 use lumo_runtime::{ConfiguredRepository, LocalBackend, RuntimeConfig, SystemClock};
@@ -12,6 +13,7 @@ use state::BackendState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(mobile::init())
         .setup(|app| {
             #[cfg(mobile)]
             {
@@ -51,6 +53,12 @@ pub fn run() {
             commands::tracking::controller_request_location,
             commands::tracking::events_mark_read,
             commands::debug::debug_apply_scenario,
+            mobile::mobile_get_status,
+            mobile::mobile_request_permissions,
+            mobile::mobile_configure_tracking,
+            mobile::mobile_open_phone_dialer,
+            mobile::mobile_show_notification,
+            mobile::mobile_open_battery_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Lumo");

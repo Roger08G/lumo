@@ -2536,6 +2536,7 @@ name = "lumo-mobile"
 version = "0.1.0"
 dependencies = [
  "dotenvy",
+ "jni",
  "lumo-core",
  "lumo-runtime",
  "serde",
@@ -2544,6 +2545,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-barcode-scanner",
  "tauri-plugin-geolocation",
+ "tauri-plugin-lumo-mobile",
  "tauri-plugin-opener",
  "tempfile",
 ]
@@ -4400,6 +4402,16 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "tauri-plugin-lumo-mobile"
+version = "0.1.0"
+dependencies = [
+ "serde",
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.20",
