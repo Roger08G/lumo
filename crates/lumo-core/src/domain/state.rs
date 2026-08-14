@@ -97,4 +97,14 @@ impl RuntimeState {
             commands: self.commands.clone(),
         }
     }
+
+    /// Least-privilege projection returned to a controlled device. Places, timeline events and
+    /// pending controller commands remain server-side, where geofence and locate operations run.
+    pub fn member_snapshot(&self) -> AppSnapshot {
+        let mut snapshot = self.snapshot(RuntimeProfile::Controlled);
+        snapshot.places.clear();
+        snapshot.events.clear();
+        snapshot.commands.clear();
+        snapshot
+    }
 }

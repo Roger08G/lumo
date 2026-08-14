@@ -6,13 +6,21 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+argon2.workspace = true
 axum.workspace = true
 axum-server.workspace = true
+base64.workspace = true
+chacha20poly1305.workspace = true
 dotenvy.workspace = true
+hkdf.workspace = true
+hmac.workspace = true
 lumo-core = { path = "../lumo-core" }
 lumo-protocol = { path = "../lumo-protocol" }
+rand.workspace = true
 rusqlite.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 uuid.workspace = true
 zeroize.workspace = true

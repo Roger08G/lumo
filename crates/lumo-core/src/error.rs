@@ -8,6 +8,8 @@ pub enum LumoError {
     InvalidInput(String),
     #[error("not authorized")]
     Unauthorized,
+    #[error("tracking is disabled or location permissions are missing")]
+    TrackingDisabled,
     #[error("protected actions are temporarily locked")]
     RateLimited,
     #[error("group not initialized")]

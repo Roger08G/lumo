@@ -1,4 +1,4 @@
-use lumo_api::{build_app, config::ApiConfig, storage::ApiStore};
+use lumo_api::{build_app, config::ApiConfig, crypto::MasterKey, storage::ApiStore};
 
 #[tokio::main]
 async fn main() {
@@ -18,8 +18,12 @@ async fn healthcheck() -> bool {
         Err(_) => return false,
     };
     let database_path = config.database_path.clone();
+    let master = match MasterKey::new(&config.master_key) {
+        Ok(master) => master,
+        Err(_) => return false,
+    };
     let database_ok = tokio::task::spawn_blocking(move || {
-        ApiStore::open(database_path).and_then(|store| store.healthcheck())
+        ApiStore::open(database_path, &master).and_then(|store| store.healthcheck())
     })
     .await
     .is_ok_and(|result| result.is_ok());
@@ -38,7 +42,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     axum_server::bind_rustls(config.bind, tls)
-        .serve(app.into_make_service())
+        .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
         .await?;
     Ok(())
 }

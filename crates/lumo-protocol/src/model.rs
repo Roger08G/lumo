@@ -1,5 +1,10 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use lumo_core::{security::SealedPayload, LumoError, LumoResult};
+use lumo_core::{
+    application::{ReportLocationInput, SetTrackingInput},
+    domain::{AppSnapshot, Connectivity},
+    security::SealedPayload,
+    LumoError, LumoResult,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -134,18 +139,41 @@ pub struct CompactSealedPayload {
     ciphertext: String,
 }
 
+impl From<&SealedPayload> for CompactSealedPayload {
+    fn from(envelope: &SealedPayload) -> Self {
+        Self {
+            version: envelope.version,
+            message_id: envelope.message_id.clone(),
+            issued_at_ms: envelope.issued_at_ms,
+            expires_at_ms: envelope.expires_at_ms,
+            nonce: URL_SAFE_NO_PAD.encode(&envelope.nonce),
+            ciphertext: URL_SAFE_NO_PAD.encode(&envelope.ciphertext),
+        }
+    }
+}
+
+impl TryFrom<CompactSealedPayload> for SealedPayload {
+    type Error = LumoError;
+
+    fn try_from(envelope: CompactSealedPayload) -> Result<Self, Self::Error> {
+        let decoded = Self {
+            version: envelope.version,
+            message_id: envelope.message_id,
+            issued_at_ms: envelope.issued_at_ms,
+            expires_at_ms: envelope.expires_at_ms,
+            nonce: decode_binary("nonce", &envelope.nonce)?,
+            ciphertext: decode_binary("ciphertext", &envelope.ciphertext)?,
+        };
+        validate_envelope(&decoded)?;
+        Ok(decoded)
+    }
+}
+
 impl From<&RemoteStateRecord> for CompactRemoteStateRecord {
     fn from(record: &RemoteStateRecord) -> Self {
         Self {
             revision: record.revision,
-            envelope: CompactSealedPayload {
-                version: record.envelope.version,
-                message_id: record.envelope.message_id.clone(),
-                issued_at_ms: record.envelope.issued_at_ms,
-                expires_at_ms: record.envelope.expires_at_ms,
-                nonce: URL_SAFE_NO_PAD.encode(&record.envelope.nonce),
-                ciphertext: URL_SAFE_NO_PAD.encode(&record.envelope.ciphertext),
-            },
+            envelope: CompactSealedPayload::from(&record.envelope),
         }
     }
 }
@@ -156,14 +184,7 @@ impl TryFrom<CompactRemoteStateRecord> for RemoteStateRecord {
     fn try_from(record: CompactRemoteStateRecord) -> Result<Self, Self::Error> {
         let decoded = Self {
             revision: record.revision,
-            envelope: SealedPayload {
-                version: record.envelope.version,
-                message_id: record.envelope.message_id,
-                issued_at_ms: record.envelope.issued_at_ms,
-                expires_at_ms: record.envelope.expires_at_ms,
-                nonce: decode_binary("nonce", &record.envelope.nonce)?,
-                ciphertext: decode_binary("ciphertext", &record.envelope.ciphertext)?,
-            },
+            envelope: record.envelope.try_into()?,
         };
         decoded.validate()?;
         Ok(decoded)
@@ -196,6 +217,21 @@ fn decode_binary(field: &str, encoded: &str) -> LumoResult<Vec<u8>> {
     })
 }
 
+fn validate_envelope(envelope: &SealedPayload) -> LumoResult<()> {
+    if envelope.version != ENVELOPE_VERSION
+        || Uuid::parse_str(&envelope.message_id).is_err()
+        || envelope.nonce.len() != XCHACHA20_NONCE_LENGTH
+        || envelope.ciphertext.len() < POLY1305_TAG_LENGTH
+        || envelope.ciphertext.len() > MAX_ENCRYPTED_STATE_BYTES
+        || envelope.expires_at_ms < envelope.issued_at_ms
+    {
+        return Err(LumoError::InvalidInput(
+            "sealed payload is malformed".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthResponse {
@@ -208,4 +244,240 @@ pub struct HealthResponse {
 pub struct ApiErrorBody {
     pub code: String,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceRole {
+    Controller,
+    Controlled,
+}
+
+impl DeviceRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Controller => "controller",
+            Self::Controlled => "controlled",
+        }
+    }
+}
+
+impl std::str::FromStr for DeviceRole {
+    type Err = LumoError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "controller" => Ok(Self::Controller),
+            "controlled" => Ok(Self::Controlled),
+            _ => Err(LumoError::InvalidInput("invalid device role".to_owned())),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGroupRequest {
+    pub request_id: String,
+    pub pin: String,
+    pub device_name: String,
+}
+
+impl std::fmt::Debug for CreateGroupRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CreateGroupRequest")
+            .field("request_id", &self.request_id)
+            .field("pin", &"[REDACTED]")
+            .field("device_name", &self.device_name)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceCredentialResponse {
+    pub group_id: String,
+    pub device_id: String,
+    pub role: DeviceRole,
+    pub device_token: String,
+    pub state_key: String,
+}
+
+impl std::fmt::Debug for DeviceCredentialResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DeviceCredentialResponse")
+            .field("group_id", &self.group_id)
+            .field("device_id", &self.device_id)
+            .field("role", &self.role)
+            .field("device_token", &"[REDACTED]")
+            .field("state_key", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateInvitationRequest {
+    pub pin: String,
+}
+
+impl std::fmt::Debug for CreateInvitationRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CreateInvitationRequest")
+            .field("pin", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvitationResponse {
+    pub invitation_id: String,
+    pub token: String,
+    pub expires_at_ms: i64,
+}
+
+impl std::fmt::Debug for InvitationResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("InvitationResponse")
+            .field("invitation_id", &self.invitation_id)
+            .field("token", &"[REDACTED]")
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsumeInvitationRequest {
+    pub request_id: String,
+    pub token: String,
+    pub pin: String,
+    pub device_name: String,
+}
+
+impl std::fmt::Debug for ConsumeInvitationRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ConsumeInvitationRequest")
+            .field("request_id", &self.request_id)
+            .field("token", &"[REDACTED]")
+            .field("pin", &"[REDACTED]")
+            .field("device_name", &self.device_name)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProtectedActionRequest {
+    pub pin: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload", rename_all = "camelCase")]
+pub enum ControlledOperation {
+    SetTracking(SetTrackingInput),
+    ReportLocation(ReportLocationInput),
+    SetConnectivity { connectivity: Connectivity },
+    SendHelp,
+    ProcessPending,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlledOperationRequest {
+    pub operation_id: String,
+    pub operation: ControlledOperation,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlledOperationResponse {
+    pub snapshot: AppSnapshot,
+    pub processed: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberOperationEnvelopeRequest {
+    pub envelope: CompactSealedPayload,
+}
+
+impl std::fmt::Debug for ProtectedActionRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProtectedActionRequest")
+            .field("pin", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceSummary {
+    pub device_id: String,
+    pub device_name: String,
+    pub role: DeviceRole,
+    pub created_at_ms: i64,
+    pub last_seen_at_ms: i64,
+    pub revoked_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceListResponse {
+    pub devices: Vec<DeviceSummary>,
+}
+
+#[cfg(test)]
+mod v2_tests {
+    use super::*;
+
+    #[test]
+    fn sensitive_v2_models_redact_debug_output() {
+        let credential = DeviceCredentialResponse {
+            group_id: Uuid::new_v4().to_string(),
+            device_id: Uuid::new_v4().to_string(),
+            role: DeviceRole::Controller,
+            device_token: "device-token-that-must-not-leak".to_owned(),
+            state_key: "state-key-that-must-not-leak".to_owned(),
+        };
+        let debug = format!("{credential:?}");
+        assert!(!debug.contains("device-token-that-must-not-leak"));
+        assert!(!debug.contains("state-key-that-must-not-leak"));
+
+        let create = CreateGroupRequest {
+            request_id: Uuid::new_v4().to_string(),
+            pin: "pin-that-must-not-leak".to_owned(),
+            device_name: "Device".to_owned(),
+        };
+        let invite = CreateInvitationRequest {
+            pin: "second-pin-that-must-not-leak".to_owned(),
+        };
+        assert!(!format!("{create:?}").contains("pin-that-must-not-leak"));
+        assert!(!format!("{invite:?}").contains("second-pin-that-must-not-leak"));
+    }
+
+    #[test]
+    fn controlled_operation_wire_shape_is_stable_and_camel_case() {
+        let operation_id = Uuid::new_v4().to_string();
+        let request = ControlledOperationRequest {
+            operation_id: operation_id.clone(),
+            operation: ControlledOperation::SetConnectivity {
+                connectivity: Connectivity::Online,
+            },
+        };
+        let json = serde_json::to_value(&request).expect("serialize operation");
+        assert_eq!(json["operationId"], operation_id);
+        assert_eq!(json["operation"]["type"], "setConnectivity");
+        assert_eq!(json["operation"]["payload"]["connectivity"], "online");
+        assert_eq!(
+            serde_json::from_value::<ControlledOperationRequest>(json).expect("deserialize"),
+            request
+        );
+    }
 }
