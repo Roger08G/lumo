@@ -23,10 +23,12 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 lumo-core = { path = "../../crates/lumo-core" }
+lumo-protocol = { path = "../../crates/lumo-protocol" }
 lumo-runtime = { path = "../../crates/lumo-runtime" }
 tauri-plugin-lumo-mobile = { path = "../../plugins/tauri-plugin-lumo-mobile" }
 serde.workspace = true
 serde_json.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

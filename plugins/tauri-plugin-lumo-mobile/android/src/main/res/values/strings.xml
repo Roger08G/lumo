@@ -9,4 +9,6 @@
     <string name="lumo_sync_body">Las notificaciones del grupo están activas</string>
     <string name="lumo_reopen_title">Abre Lumo para reactivar los avisos</string>
     <string name="lumo_reopen_body">Android necesita que abras la aplicación después del reinicio</string>
+    <string name="lumo_repair_title">Vuelve a emparejar este dispositivo</string>
+    <string name="lumo_repair_body">La credencial de Lumo ya no es válida</string>
 </resources>

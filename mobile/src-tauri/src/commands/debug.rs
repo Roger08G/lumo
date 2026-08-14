@@ -11,6 +11,9 @@ pub async fn debug_apply_scenario(
     state: State<'_, BackendState>,
     scenario: SimulationScenario,
 ) -> CommandResult<AppSnapshot> {
+    if state.2 == lumo_runtime::RuntimeMode::Remote {
+        return Err(lumo_core::LumoError::Unauthorized.into());
+    }
     let backend = state.0.clone();
     state.1.require_controller()?;
     run_blocking(move || backend.debug_scenario(scenario).map_err(Into::into)).await

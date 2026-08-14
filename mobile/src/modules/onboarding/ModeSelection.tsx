@@ -71,6 +71,10 @@ export function ModeSelection({ onSelect }: ModeSelectionProps) {
     const { state } = useLumo();
     const groupName = state.group.name || "Mi familia";
     const [securityAction, setSecurityAction] = useState<GroupSecurityAction | null>(null);
+    const availableModes =
+        state.group.role === "member"
+            ? MODES.filter((option) => option.mode === "tracker")
+            : MODES.filter((option) => option.mode !== "tracker");
 
     return (
         <main
@@ -151,7 +155,7 @@ export function ModeSelection({ onSelect }: ModeSelectionProps) {
             </section>
 
             <div css={css({ display: "grid", gap: 11 })}>
-                {MODES.map((option, index) => (
+                {availableModes.map((option, index) => (
                     <button
                         key={option.mode}
                         type="button"

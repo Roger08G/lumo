@@ -849,7 +849,7 @@ function SettingsView({
                     <div css={css({ display: "grid", gap: 2 })}>
                         <strong css={css({ fontSize: 14 })}>Cambiar la experiencia</strong>
                         <span css={css({ color: "var(--lumo-text-muted)", fontSize: 10 })}>
-                            Alterna entre controlador, tracker y debug
+                            Elige la vista disponible en este teléfono
                         </span>
                     </div>
                 </div>

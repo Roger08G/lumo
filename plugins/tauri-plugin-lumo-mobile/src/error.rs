@@ -7,6 +7,8 @@ pub enum Error {
     #[cfg(target_os = "android")]
     #[error(transparent)]
     PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
+    #[error("Android could not read the protected device credential")]
+    CredentialBridge,
     #[error("Lumo mobile integration is only available on Android")]
     UnsupportedPlatform,
 }

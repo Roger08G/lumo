@@ -28,6 +28,7 @@ impl From<LumoError> for CommandError {
         let code = match error {
             LumoError::InvalidInput(_) => "invalid_input",
             LumoError::Unauthorized => "unauthorized",
+            LumoError::TrackingDisabled => "tracking_disabled",
             LumoError::RateLimited => "rate_limited",
             LumoError::GroupNotInitialized => "group_not_initialized",
             LumoError::NotFound(_) => "not_found",

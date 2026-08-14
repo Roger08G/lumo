@@ -60,6 +60,57 @@ class LumoReliabilityPolicyTest {
     }
 
     @Test
+    fun queuedLocationsCannotCrossDevicePrincipals() {
+        val credential =
+            LumoDeviceCredential(
+                version = 1,
+                apiOrigin = "https://api.example.test",
+                groupId = "0f4dc689-1c52-4189-bd5a-393dc0c655bf",
+                deviceId = "0cfbbc0d-9b61-44f5-a307-7869bd42af59",
+                role = "controlled",
+                deviceToken = "A".repeat(43),
+                stateKey = "B".repeat(43),
+            )
+        assertTrue(
+            LumoQueueCredentialPolicy.belongsTo(
+                credential.groupId,
+                credential.deviceId,
+                credential,
+            ),
+        )
+        assertFalse(
+            LumoQueueCredentialPolicy.belongsTo(
+                "f3fbf980-7754-436f-8021-8ee2bd160ec7",
+                credential.deviceId,
+                credential,
+            ),
+        )
+        assertFalse(LumoQueueCredentialPolicy.belongsTo(null, null, credential))
+    }
+
+    @Test
+    fun explicitControlledTrackingOptOutCanNeverBeAutoRecovered() {
+        assertFalse(
+            LumoControlledTrackingPolicy.mayAutoRecover(
+                configured = false,
+                explicitlyDisabled = false,
+            ),
+        )
+        assertTrue(
+            LumoControlledTrackingPolicy.mayAutoRecover(
+                configured = true,
+                explicitlyDisabled = false,
+            ),
+        )
+        assertFalse(
+            LumoControlledTrackingPolicy.mayAutoRecover(
+                configured = true,
+                explicitlyDisabled = true,
+            ),
+        )
+    }
+
+    @Test
     fun restartPolicyRestartsControllerWithoutLocationPermissions() {
         assertEquals(
             LumoRestartAction.START,

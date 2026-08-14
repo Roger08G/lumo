@@ -1,8 +1,6 @@
 use std::{env, fmt, path::PathBuf};
 
 use lumo_core::{LumoError, LumoResult};
-use lumo_protocol::MIN_API_SECRET_BYTES;
-use zeroize::Zeroizing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeMode {
@@ -15,7 +13,6 @@ pub struct RuntimeConfig {
     pub mode: RuntimeMode,
     pub data_dir: PathBuf,
     pub api_url: Option<String>,
-    api_password: Option<Zeroizing<String>>,
 }
 
 impl fmt::Debug for RuntimeConfig {
@@ -25,10 +22,6 @@ impl fmt::Debug for RuntimeConfig {
             .field("mode", &self.mode)
             .field("data_dir", &self.data_dir)
             .field("api_url", &self.api_url)
-            .field(
-                "api_password",
-                &self.api_password.as_ref().map(|_| "[REDACTED]"),
-            )
             .finish()
     }
 }
@@ -39,7 +32,6 @@ impl RuntimeConfig {
             mode: RuntimeMode::Local,
             data_dir: data_dir.into(),
             api_url: None,
-            api_password: None,
         }
     }
 
@@ -49,7 +41,6 @@ impl RuntimeConfig {
             env::var("LUMO_RUNTIME_MODE").ok().as_deref(),
             env::var_os("LUMO_DATA_DIR").map(PathBuf::from),
             env::var("LUMO_API_URL").ok().as_deref(),
-            env::var("LUMO_API_PASSWORD").ok().as_deref(),
         )
     }
 
@@ -57,7 +48,6 @@ impl RuntimeConfig {
         mode: Option<&str>,
         data_dir: Option<PathBuf>,
         api_url: Option<&str>,
-        api_password: Option<&str>,
     ) -> LumoResult<Self> {
         let mode = match mode.unwrap_or("local").to_ascii_lowercase().as_str() {
             "local" => RuntimeMode::Local,
@@ -72,10 +62,6 @@ impl RuntimeConfig {
         let api_url = api_url
             .map(str::to_owned)
             .filter(|value| !value.trim().is_empty());
-        let api_password = api_password
-            .map(str::to_owned)
-            .filter(|value| !value.is_empty())
-            .map(Zeroizing::new);
 
         if mode == RuntimeMode::Remote {
             let url = api_url.as_deref().ok_or_else(|| {
@@ -86,19 +72,38 @@ impl RuntimeConfig {
                     "remote mode requires an https:// API URL".to_owned(),
                 ));
             }
-            if api_password.as_deref().map_or(0, |value| value.len()) < MIN_API_SECRET_BYTES {
-                return Err(LumoError::Configuration(format!(
-                    "LUMO_API_PASSWORD must contain at least {MIN_API_SECRET_BYTES} bytes"
-                )));
-            }
         }
 
         Ok(Self {
             mode,
             data_dir,
             api_url,
-            api_password,
         })
+    }
+
+    /// Builds the configuration embedded in a mobile application.
+    ///
+    /// Debug builds may still opt into the local runtime for development. A release APK must be
+    /// explicitly compiled for the remote runtime with an HTTPS origin; silently falling back to
+    /// a local database would create an apparently working application that never synchronizes.
+    pub fn from_mobile_values(
+        mode: Option<&str>,
+        data_dir: Option<PathBuf>,
+        api_url: Option<&str>,
+        release: bool,
+    ) -> LumoResult<Self> {
+        if release && !mode.is_some_and(|value| value.eq_ignore_ascii_case("remote")) {
+            return Err(LumoError::Configuration(
+                "mobile release requires LUMO_RUNTIME_MODE=remote".to_owned(),
+            ));
+        }
+        let config = Self::from_values(mode, data_dir, api_url)?;
+        if release && config.api_url.is_none() {
+            return Err(LumoError::Configuration(
+                "mobile release requires LUMO_API_URL".to_owned(),
+            ));
+        }
+        Ok(config)
     }
 
     pub fn require_local(&self) -> LumoResult<()> {
@@ -106,10 +111,6 @@ impl RuntimeConfig {
             RuntimeMode::Local => Ok(()),
             RuntimeMode::Remote => Err(LumoError::RemoteUnavailable),
         }
-    }
-
-    pub fn api_password(&self) -> Option<&str> {
-        self.api_password.as_deref().map(String::as_str)
     }
 
     pub fn with_data_dir(mut self, data_dir: impl Into<PathBuf>) -> Self {
@@ -123,16 +124,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn debug_output_redacts_password() {
+    fn debug_output_contains_no_credentials() {
         let config = RuntimeConfig {
             mode: RuntimeMode::Remote,
             data_dir: PathBuf::from("data"),
             api_url: Some("https://example.test".into()),
-            api_password: Some(Zeroizing::new("very-secret-password".into())),
         };
         let debug = format!("{config:?}");
-        assert!(debug.contains("[REDACTED]"));
-        assert!(!debug.contains("very-secret-password"));
+        assert!(debug.contains("https://example.test"));
+        assert!(!debug.to_ascii_lowercase().contains("password"));
     }
 
     #[test]
@@ -141,20 +141,50 @@ mod tests {
     }
 
     #[test]
-    fn remote_values_fail_closed_without_https_and_a_strong_password() {
-        assert!(RuntimeConfig::from_values(
-            Some("remote"),
-            None,
-            Some("http://api.invalid"),
-            Some("a-long-enough-password"),
-        )
-        .is_err());
-        assert!(RuntimeConfig::from_values(
-            Some("remote"),
+    fn remote_values_fail_closed_without_an_https_origin() {
+        assert!(
+            RuntimeConfig::from_values(Some("remote"), None, Some("http://api.invalid"),).is_err()
+        );
+        assert!(RuntimeConfig::from_values(Some("remote"), None, None).is_err());
+        assert!(
+            RuntimeConfig::from_values(Some("remote"), None, Some("https://api.invalid"),).is_ok()
+        );
+    }
+
+    #[test]
+    fn mobile_release_never_falls_back_to_local_runtime() {
+        assert!(RuntimeConfig::from_mobile_values(None, None, None, true).is_err());
+        assert!(RuntimeConfig::from_mobile_values(
+            Some("local"),
             None,
             Some("https://api.invalid"),
-            Some("short"),
+            true,
         )
         .is_err());
+        assert!(RuntimeConfig::from_mobile_values(Some("remote"), None, None, true).is_err());
+        let release = RuntimeConfig::from_mobile_values(
+            Some("REMOTE"),
+            None,
+            Some("https://api.invalid"),
+            true,
+        )
+        .expect("remote mobile release");
+        assert_eq!(release.mode, RuntimeMode::Remote);
+    }
+
+    #[test]
+    fn mobile_debug_and_cli_local_tools_keep_explicit_local_mode() {
+        assert_eq!(
+            RuntimeConfig::from_mobile_values(Some("local"), None, None, false)
+                .expect("mobile debug")
+                .mode,
+            RuntimeMode::Local
+        );
+        assert_eq!(
+            RuntimeConfig::from_values(None, None, None)
+                .expect("CLI default")
+                .mode,
+            RuntimeMode::Local
+        );
     }
 }

@@ -55,7 +55,7 @@ type JoinStep = "scan" | "pin";
 function readPreviewInvite(): PreviewInvite {
     try {
         const stored = JSON.parse(
-            localStorage.getItem("lumo.preview-invite") ?? "null",
+            sessionStorage.getItem("lumo.preview-invite") ?? "null",
         ) as PreviewInvite | null;
         if (
             (stored?.version === 1 || stored?.version === 2) &&
@@ -210,6 +210,7 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                 trackedPersonPhone: "",
                 role: "member",
                 entry: "joined",
+                invitationId: scannedInvite.invitationId,
                 inviteToken: scannedInvite.token,
             });
         } catch (requestError) {
@@ -228,6 +229,9 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
         setError("");
         try {
             const scanned = await backend.scanInvitation();
+            if (!scanned && backend.isMobileNative()) {
+                throw new Error("No se ha escaneado ninguna invitación");
+            }
             if (!scanned) await new Promise((resolve) => window.setTimeout(resolve, 850));
             setScannedInvite((scanned as PreviewInvite | null) ?? readPreviewInvite());
             setJoinStep("pin");
@@ -496,7 +500,11 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                 {joinStep === "scan" ? (
                     <div css={css({ display: "grid", gap: 16 })}>
                         <div
-                            aria-label="Escáner QR de demostración"
+                            aria-label={
+                                backend.isMobileNative()
+                                    ? "Escáner QR con la cámara trasera"
+                                    : "Escáner QR de demostración"
+                            }
                             css={css({
                                 position: "relative",
                                 height: 224,
@@ -541,7 +549,9 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                                 <FiCamera size={36} />
                             </span>
                             <span css={css({ position: "absolute", right: 12, bottom: 12 })}>
-                                <Pill tone="neutral">Demo visual</Pill>
+                                <Pill tone="neutral">
+                                    {backend.isMobileNative() ? "Cámara trasera" : "Demo visual"}
+                                </Pill>
                             </span>
                         </div>
                         <p

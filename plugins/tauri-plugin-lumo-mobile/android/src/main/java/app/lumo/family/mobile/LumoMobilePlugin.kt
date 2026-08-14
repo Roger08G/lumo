@@ -14,7 +14,9 @@ import app.tauri.annotation.Permission
 import app.tauri.annotation.PermissionCallback
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
+import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
+import org.json.JSONObject
 
 private const val ALIAS_PRECISE_LOCATION = "preciseLocation"
 private const val ALIAS_BACKGROUND_LOCATION = "backgroundLocation"
@@ -85,6 +87,75 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     @Command
+    fun storeCredential(invoke: Invoke) {
+        val args = runCatching { invoke.parseArgs(DeviceCredentialArgs::class.java) }.getOrNull()
+        val credential = args?.let(LumoDeviceCredential::fromArgs)
+        if (credential == null) {
+            invoke.reject("La credencial del dispositivo no es válida")
+            return
+        }
+
+        val context = activity.applicationContext
+        val previous = LumoCredentialVault.load(context)
+        val principalChanged = previous?.samePrincipal(credential) != true
+        if (principalChanged) {
+            // Stop an old scheduler before rotating identity. Pending samples are also tagged and
+            // checked during flush, but clearing on both sides of the write closes the common race.
+            LumoSecureQueue(context).replace(emptyList())
+            LumoPreferences.setTracking(
+                context,
+                enabled = false,
+                role = null,
+                intervalSeconds = LumoPreferences.intervalSeconds(context),
+            )
+            LumoServiceController.stop(context)
+            LumoPreferences.clearControllerNotifications(context)
+            LumoPreferences.clearControlledTrackingChoice(context)
+        }
+        if (!LumoCredentialVault.store(context, credential)) {
+            invoke.reject("Android no ha podido proteger la credencial del dispositivo")
+            return
+        }
+        if (principalChanged) {
+            // Pending coordinates must never cross a group, device, role, or API boundary.
+            LumoSecureQueue(context).replace(emptyList())
+        }
+        invoke.resolve()
+    }
+
+    @Command
+    fun loadCredential(invoke: Invoke) {
+        val credential = LumoCredentialVault.load(activity.applicationContext)
+        invoke.resolve(
+            JSObject().put(
+                "credential",
+                credential?.toBridgeObject() ?: JSONObject.NULL,
+            ),
+        )
+    }
+
+    @Command
+    fun clearCredential(invoke: Invoke) {
+        val context = activity.applicationContext
+        val cleared = LumoCredentialVault.clear(context)
+        LumoSecureQueue(context).replace(emptyList())
+        LumoPreferences.setTracking(
+            context,
+            enabled = false,
+            role = null,
+            intervalSeconds = LumoPreferences.intervalSeconds(context),
+        )
+        LumoPreferences.clearControllerNotifications(context)
+        LumoPreferences.clearControlledTrackingChoice(context)
+        LumoServiceController.stop(context)
+        if (cleared) {
+            invoke.resolve()
+        } else {
+            invoke.reject("Android no ha podido borrar la credencial del dispositivo")
+        }
+    }
+
+    @Command
     override fun requestPermissions(invoke: Invoke) {
         val role = runCatching { invoke.parseArgs(RoleArgs::class.java).role }.getOrNull()
         if (!validRole(role)) {
@@ -141,6 +212,11 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
         if (!args.enabled) {
             LumoServiceController.stop(context)
             LumoPreferences.setTracking(context, false, null, args.intervalSeconds)
+            if (args.role == LumoServiceController.ROLE_CONTROLLER) {
+                LumoPreferences.setControllerNotifications(context, false)
+            } else {
+                LumoPreferences.recordControlledTrackingChoice(context, false)
+            }
             invoke.resolve(LumoDeviceStatus.snapshot(context))
             return
         }
@@ -174,9 +250,17 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
             LumoServiceController.start(context, args.role, interval)
             LumoPreferences.setTracking(context, true, args.role, interval)
         }.onSuccess {
+            if (args.role == LumoServiceController.ROLE_CONTROLLER) {
+                LumoPreferences.setControllerNotifications(context, true)
+            } else {
+                LumoPreferences.recordControlledTrackingChoice(context, true)
+            }
             invoke.resolve(LumoDeviceStatus.snapshot(context))
         }.onFailure {
             LumoPreferences.setTracking(context, false, null, interval)
+            if (args.role == LumoServiceController.ROLE_CONTROLLER) {
+                LumoPreferences.setControllerNotifications(context, false)
+            }
             invoke.reject("Android no ha podido iniciar el servicio de Lumo")
         }
     }

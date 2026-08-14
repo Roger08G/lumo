@@ -8,7 +8,8 @@ use tauri::plugin::PluginHandle;
 use tauri::{AppHandle, Runtime};
 
 use crate::models::{
-    MobileStatus, NotificationPayload, PhonePayload, RolePayload, TrackingPayload,
+    CredentialLoadResponse, DeviceCredential, MobileStatus, NotificationPayload, PhonePayload,
+    RolePayload, TrackingPayload,
 };
 #[cfg(not(target_os = "android"))]
 use crate::Error;
@@ -59,6 +60,30 @@ impl<R: Runtime> LumoMobile<R> {
 
     pub fn get_status(&self) -> Result<MobileStatus> {
         self.run("getStatus", ())
+    }
+
+    pub fn store_credential(&self, credential: &DeviceCredential) -> Result<()> {
+        self.run("storeCredential", credential)
+    }
+
+    pub fn load_credential(&self) -> Result<Option<DeviceCredential>> {
+        #[cfg(target_os = "android")]
+        {
+            self.run::<CredentialLoadResponse>("loadCredential", ())
+                .map(|response| response.credential)
+                // Tauri includes malformed response JSON in its low-level error. Never allow a
+                // credential-bearing response to escape through Display, Debug, JS, or logs.
+                .map_err(|_| crate::Error::CredentialBridge)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            self.run::<CredentialLoadResponse>("loadCredential", ())
+                .map(|response| response.credential)
+        }
+    }
+
+    pub fn clear_credential(&self) -> Result<()> {
+        self.run("clearCredential", ())
     }
 
     pub fn request_permissions(&self, role: &str) -> Result<MobileStatus> {

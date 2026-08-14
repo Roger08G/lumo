@@ -167,6 +167,8 @@ fn storage_error(error: impl std::fmt::Display) -> LumoError {
     LumoError::Storage(error.to_string())
 }
 
+impl super::ControlledOperationPort for SqliteRepository {}
+
 #[cfg(test)]
 mod tests {
     use lumo_core::ports::StateRepository;

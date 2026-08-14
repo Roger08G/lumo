@@ -62,18 +62,16 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                     token: "preview-invitation",
                     groupName: state.group.name,
                     groupCode: state.group.code,
-                    expiresAtMs: Date.now() + 15 * 60_000,
+                    expiresAtMs: Date.now() + 10 * 60_000,
                 } satisfies InvitationData);
             setInvitation(invite);
             if (!backend.isNative()) {
                 try {
-                    localStorage.setItem(
+                    sessionStorage.setItem(
                         "lumo.preview-invite",
                         JSON.stringify({
                             version: 2,
                             kind: "lumo-group-invite",
-                            name: state.group.name,
-                            code: state.group.code,
                             invitationId: invite.invitationId,
                             token: invite.token,
                             expiresAt: invite.expiresAtMs,
@@ -81,7 +79,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                         }),
                     );
                 } catch {
-                    // Browser preview storage is optional and never used by the native app.
+                    // Session-only browser preview; the native app never stores QR tokens here.
                 }
             }
             setVerified(true);

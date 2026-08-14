@@ -34,3 +34,5 @@ impl StateRepository for MemoryRepository {
         operation(&mut state)
     }
 }
+
+impl super::ControlledOperationPort for MemoryRepository {}

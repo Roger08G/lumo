@@ -1,6 +1,12 @@
+mod credential_vault;
+mod onboarding;
+
+pub use credential_vault::DeviceCredentialVault;
+pub use onboarding::PendingOnboardingStore;
+
 use std::{
     fs,
-    io::ErrorKind,
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -16,14 +22,17 @@ pub struct DeviceBinding {
 impl DeviceBinding {
     pub fn open(path: impl Into<PathBuf>) -> LumoResult<Self> {
         let path = path.into();
-        let profile =
-            match fs::read(&path) {
-                Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(|error| {
-                    LumoError::Storage(format!("invalid device binding: {error}"))
-                })?),
-                Err(error) if error.kind() == ErrorKind::NotFound => None,
-                Err(error) => return Err(storage_error(error)),
-            };
+        let profile = match fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(profile) => Some(profile),
+                Err(_) => {
+                    fs::remove_file(&path).map_err(storage_error)?;
+                    None
+                }
+            },
+            Err(error) if error.kind() == ErrorKind::NotFound => None,
+            Err(error) => return Err(storage_error(error)),
+        };
         Ok(Self {
             path: Arc::new(path),
             profile: Arc::new(Mutex::new(profile)),
@@ -80,6 +89,13 @@ impl DeviceBinding {
     }
 
     pub fn bind(&self, profile: RuntimeProfile) -> LumoResult<()> {
+        if let Some(current) = self.profile()? {
+            return if current == profile {
+                Ok(())
+            } else {
+                Err(LumoError::Unauthorized)
+            };
+        }
         if let Some(parent) = self
             .path
             .parent()
@@ -89,7 +105,7 @@ impl DeviceBinding {
         }
         let encoded = serde_json::to_vec(&profile)
             .map_err(|error| LumoError::Serialization(error.to_string()))?;
-        write_private(&self.path, &encoded)?;
+        write_binding_atomically(&self.path, &encoded)?;
         *self
             .profile
             .lock()
@@ -113,7 +129,35 @@ impl DeviceBinding {
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> LumoResult<()> {
-    fs::write(path, bytes).map_err(storage_error)
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(storage_error)?;
+    file.write_all(bytes).map_err(storage_error)?;
+    file.sync_all().map_err(storage_error)
+}
+
+fn write_binding_atomically(path: &Path, bytes: &[u8]) -> LumoResult<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| LumoError::Storage("device binding path has no parent".to_owned()))?;
+    let temporary = parent.join(format!(".device-binding-{}.tmp", uuid::Uuid::new_v4()));
+    write_private(&temporary, bytes)?;
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(storage_error(error));
+    }
+    #[cfg(unix)]
+    {
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(storage_error)?;
+    }
+    Ok(())
 }
 
 fn storage_error(error: impl std::fmt::Display) -> LumoError {
@@ -142,6 +186,36 @@ mod tests {
         );
         binding.clear().expect("clear");
         assert_eq!(binding.profile().expect("profile"), None);
+    }
+
+    #[test]
+    fn binding_is_idempotent_but_cannot_change_authority() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let binding = DeviceBinding::open(directory.path().join("device.json")).expect("binding");
+        binding
+            .bind(RuntimeProfile::Controller)
+            .expect("initial binding");
+        binding
+            .bind(RuntimeProfile::Controller)
+            .expect("idempotent binding");
+        assert_eq!(
+            binding.bind(RuntimeProfile::Controlled),
+            Err(LumoError::Unauthorized)
+        );
+        assert_eq!(
+            binding.profile().expect("profile"),
+            Some(RuntimeProfile::Controller)
+        );
+    }
+
+    #[test]
+    fn corrupt_binding_is_removed_and_returns_to_onboarding() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("device.json");
+        fs::write(&path, b"not-json").expect("corrupt binding");
+        let binding = DeviceBinding::open(&path).expect("binding");
+        assert_eq!(binding.profile().expect("profile"), None);
+        assert!(!path.exists());
     }
 
     #[test]

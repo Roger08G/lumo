@@ -65,10 +65,22 @@ internal object LumoDeviceStatus {
         JSObject()
             .put("platform", "android")
             .put("trackingEnabled", LumoPreferences.isEnabled(context))
+            .put(
+                "controlledTrackingMayAutoRecover",
+                LumoPreferences.controlledTrackingMayAutoRecover(context),
+            )
             .put("role", LumoPreferences.role(context))
             .put("preciseLocation", if (preciseLocationGranted(context)) "granted" else "denied")
             .put("backgroundLocation", backgroundLocationStatus(context))
             .put("notifications", if (notificationsGranted(context)) "granted" else "denied")
+            .put(
+                "controllerNotificationsConfigured",
+                LumoPreferences.controllerNotificationsConfigured(context),
+            )
+            .put(
+                "controllerNotificationsEnabled",
+                LumoPreferences.controllerNotificationsEnabled(context),
+            )
             .put("batteryOptimizationDisabled", batteryOptimizationDisabled(context))
             .put("batteryPercent", batteryPercent(context))
             .put("locationServicesEnabled", locationServicesEnabled(context))

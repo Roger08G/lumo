@@ -71,7 +71,11 @@ function AppContent() {
                     const snapshot =
                         payload.role === "supervisor"
                             ? await backend.createGroup(payload)
-                            : await backend.joinGroup(payload.inviteToken ?? "", payload.pin);
+                            : await backend.joinGroup(
+                                  payload.invitationId ?? "",
+                                  payload.inviteToken ?? "",
+                                  payload.pin,
+                              );
                     dispatch(
                         snapshot
                             ? { type: "HYDRATE_BACKEND", payload: snapshot }
