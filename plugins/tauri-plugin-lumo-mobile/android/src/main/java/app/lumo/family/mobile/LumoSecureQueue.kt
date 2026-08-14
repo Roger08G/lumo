@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import androidx.core.content.edit
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -12,16 +13,6 @@ import javax.crypto.spec.GCMParameterSpec
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal object LumoQueuePolicy {
-    const val RETENTION_MS = 24 * 60 * 60 * 1000L
-    const val MAX_ENTRIES = 100
-
-    fun isRecent(timestampMs: Long, now: Long): Boolean =
-        timestampMs > 0L && now - timestampMs in 0..RETENTION_MS
-
-    fun <T> newest(entries: List<T>): List<T> = entries.takeLast(MAX_ENTRIES)
-}
-
 internal class LumoSecureQueue(private val context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES_FILE, Context.MODE_PRIVATE)
 
@@ -29,11 +20,11 @@ internal class LumoSecureQueue(private val context: Context) {
     fun read(): List<String> {
         val encrypted = preferences.getString(KEY_QUEUE, null) ?: return emptyList()
         val plaintext = runCatching { decrypt(encrypted) }.getOrElse {
-            preferences.edit().remove(KEY_QUEUE).commit()
+            preferences.edit(commit = true) { remove(KEY_QUEUE) }
             return emptyList()
         }
         val array = runCatching { JSONArray(plaintext) }.getOrElse {
-            preferences.edit().remove(KEY_QUEUE).commit()
+            preferences.edit(commit = true) { remove(KEY_QUEUE) }
             return emptyList()
         }
         val values = buildList {
@@ -42,46 +33,45 @@ internal class LumoSecureQueue(private val context: Context) {
             }
         }
         val now = System.currentTimeMillis()
-        val retained =
-            LumoQueuePolicy.newest(
-                values.filter { payload ->
-                    runCatching {
-                        LumoQueuePolicy.isRecent(JSONObject(payload).optLong("timestampMs", 0L), now)
-                    }.getOrDefault(false)
-                },
-            )
-        if (retained.size != values.size) replace(retained)
+        val retained = compact(values, now)
+        if (retained != values) replace(retained)
         return retained
     }
 
     @Synchronized
     fun enqueue(payload: String) {
-        replace(LumoQueuePolicy.newest(read() + payload))
+        replace(read() + payload)
     }
 
     @Synchronized
     fun replace(payloads: List<String>) {
         if (payloads.isEmpty()) {
-            preferences.edit().remove(KEY_QUEUE).commit()
+            preferences.edit(commit = true) { remove(KEY_QUEUE) }
             return
         }
         val now = System.currentTimeMillis()
-        val retained =
-            LumoQueuePolicy.newest(
-                payloads.filter { payload ->
-                    runCatching {
-                        LumoQueuePolicy.isRecent(JSONObject(payload).optLong("timestampMs", 0L), now)
-                    }.getOrDefault(false)
-                },
-            )
+        val retained = compact(payloads, now)
         if (retained.isEmpty()) {
-            preferences.edit().remove(KEY_QUEUE).commit()
+            preferences.edit(commit = true) { remove(KEY_QUEUE) }
             return
         }
         val serialized = JSONArray(retained).toString()
         val encrypted = runCatching { encrypt(serialized) }.getOrNull() ?: return
-        preferences.edit().putString(KEY_QUEUE, encrypted).commit()
+        preferences.edit(commit = true) { putString(KEY_QUEUE, encrypted) }
     }
+
+    private fun compact(payloads: List<String>, nowMs: Long): List<String> =
+        LumoQueuePolicy.compact(
+            payloads.asSequence().filter { it.length <= MAX_PAYLOAD_CHARS }.mapNotNull { payload ->
+                runCatching {
+                    LumoTimedEntry(
+                        timestampMs = JSONObject(payload).optLong("timestampMs", 0L),
+                        value = payload,
+                    )
+                }.getOrNull()
+            }.toList(),
+            nowMs,
+        ).map(LumoTimedEntry<String>::value)
 
     private fun encrypt(value: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -124,5 +114,6 @@ internal class LumoSecureQueue(private val context: Context) {
         const val ANDROID_KEY_STORE = "AndroidKeyStore"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val SEPARATOR = "."
+        const val MAX_PAYLOAD_CHARS = 2_048
     }
 }

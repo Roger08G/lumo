@@ -7,20 +7,30 @@ import android.content.Intent
 internal class LumoBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action !in setOf(Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED)) return
-        if (!LumoPreferences.isEnabled(context)) return
-
         val role = LumoPreferences.role(context) ?: return
-        if (
-            role == LumoServiceController.ROLE_CONTROLLED &&
-                LumoDeviceStatus.preciseLocationGranted(context) &&
-                LumoDeviceStatus.backgroundLocationStatus(context) == "granted" &&
-                LumoDeviceStatus.notificationsGranted(context)
+        when (
+            LumoRestartPolicy.action(
+                enabled = LumoPreferences.isEnabled(context),
+                role = role,
+                notificationsGranted = LumoDeviceStatus.notificationsGranted(context),
+                preciseLocationGranted = LumoDeviceStatus.preciseLocationGranted(context),
+                backgroundLocationGranted =
+                    LumoDeviceStatus.backgroundLocationStatus(context) in
+                        setOf("granted", "notRequired"),
+                locationServicesEnabled = LumoDeviceStatus.locationServicesEnabled(context),
+            )
         ) {
-            runCatching {
-                LumoServiceController.start(context, role, LumoPreferences.intervalSeconds(context))
-            }.onFailure { showReopenNotification(context) }
-        } else if (LumoDeviceStatus.notificationsGranted(context)) {
-            showReopenNotification(context)
+            LumoRestartAction.START -> {
+                runCatching {
+                    LumoServiceController.start(
+                        context,
+                        role,
+                        LumoPreferences.intervalSeconds(context),
+                    )
+                }.onFailure { showReopenNotification(context) }
+            }
+            LumoRestartAction.SHOW_REOPEN -> showReopenNotification(context)
+            LumoRestartAction.IGNORE -> Unit
         }
     }
 

@@ -14,6 +14,7 @@ pub async fn place_create(
     input: CreatePlaceInput,
 ) -> CommandResult<Place> {
     let backend = state.0.clone();
+    state.1.require_controller()?;
     run_blocking(move || backend.create_place(input).map_err(Into::into)).await
 }
 
@@ -24,6 +25,7 @@ pub async fn place_update(
     input: CreatePlaceInput,
 ) -> CommandResult<Place> {
     let backend = state.0.clone();
+    state.1.require_controller()?;
     run_blocking(move || backend.update_place(&id, input).map_err(Into::into)).await
 }
 
@@ -34,5 +36,6 @@ pub async fn place_delete(
     pin: String,
 ) -> CommandResult<AppSnapshot> {
     let backend = state.0.clone();
+    state.1.require_controller()?;
     run_blocking(move || backend.delete_place(&id, &pin).map_err(Into::into)).await
 }

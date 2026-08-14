@@ -6,7 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 internal object LumoTickProcessor {
-    private const val MAX_FLUSH_PER_TICK = 3
+    private const val MAX_FLUSH_PER_TICK = 8
 
     fun process(context: Context, role: String, location: Location?) {
         val queue = LumoSecureQueue(context)

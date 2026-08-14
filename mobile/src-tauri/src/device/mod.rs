@@ -37,6 +37,48 @@ impl DeviceBinding {
             .map_err(|_| LumoError::Storage("device binding lock poisoned".to_owned()))
     }
 
+    pub fn require_bound(&self) -> LumoResult<RuntimeProfile> {
+        self.profile()?.ok_or(LumoError::Unauthorized)
+    }
+
+    pub fn require_controller(&self) -> LumoResult<()> {
+        self.require_profile(RuntimeProfile::Controller)
+    }
+
+    pub fn require_controlled(&self) -> LumoResult<()> {
+        self.require_profile(RuntimeProfile::Controlled)
+    }
+
+    pub fn bootstrap_profile(
+        &self,
+        requested: RuntimeProfile,
+    ) -> LumoResult<Option<RuntimeProfile>> {
+        let Some(bound) = self.profile()? else {
+            return Ok(None);
+        };
+
+        match bound {
+            RuntimeProfile::Controlled => Ok(Some(RuntimeProfile::Controlled)),
+            RuntimeProfile::Controller
+                if matches!(
+                    requested,
+                    RuntimeProfile::Controller | RuntimeProfile::Debug
+                ) =>
+            {
+                Ok(Some(requested))
+            }
+            RuntimeProfile::Controller | RuntimeProfile::Debug => Err(LumoError::Unauthorized),
+        }
+    }
+
+    fn require_profile(&self, required: RuntimeProfile) -> LumoResult<()> {
+        if self.require_bound()? == required {
+            Ok(())
+        } else {
+            Err(LumoError::Unauthorized)
+        }
+    }
+
     pub fn bind(&self, profile: RuntimeProfile) -> LumoResult<()> {
         if let Some(parent) = self
             .path
@@ -100,5 +142,87 @@ mod tests {
         );
         binding.clear().expect("clear");
         assert_eq!(binding.profile().expect("profile"), None);
+    }
+
+    #[test]
+    fn unbound_device_cannot_authorize_privileged_commands() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let binding = DeviceBinding::open(directory.path().join("device.json")).expect("binding");
+
+        assert_eq!(binding.require_bound(), Err(LumoError::Unauthorized));
+        assert_eq!(binding.require_controller(), Err(LumoError::Unauthorized));
+        assert_eq!(binding.require_controlled(), Err(LumoError::Unauthorized));
+        assert_eq!(
+            binding
+                .bootstrap_profile(RuntimeProfile::Debug)
+                .expect("unbound bootstrap"),
+            None
+        );
+    }
+
+    #[test]
+    fn controller_binding_only_authorizes_supervisor_profiles() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let binding = DeviceBinding::open(directory.path().join("device.json")).expect("binding");
+        binding
+            .bind(RuntimeProfile::Controller)
+            .expect("bind controller");
+
+        assert_eq!(binding.require_controller(), Ok(()));
+        assert_eq!(binding.require_controlled(), Err(LumoError::Unauthorized));
+        assert_eq!(
+            binding
+                .bootstrap_profile(RuntimeProfile::Controller)
+                .expect("controller bootstrap"),
+            Some(RuntimeProfile::Controller)
+        );
+        assert_eq!(
+            binding
+                .bootstrap_profile(RuntimeProfile::Debug)
+                .expect("debug bootstrap"),
+            Some(RuntimeProfile::Debug)
+        );
+        assert_eq!(
+            binding.bootstrap_profile(RuntimeProfile::Controlled),
+            Err(LumoError::Unauthorized)
+        );
+    }
+
+    #[test]
+    fn controlled_binding_cannot_elevate_its_bootstrap_profile() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let binding = DeviceBinding::open(directory.path().join("device.json")).expect("binding");
+        binding
+            .bind(RuntimeProfile::Controlled)
+            .expect("bind controlled");
+
+        assert_eq!(binding.require_controlled(), Ok(()));
+        assert_eq!(binding.require_controller(), Err(LumoError::Unauthorized));
+        for requested in [
+            RuntimeProfile::Controlled,
+            RuntimeProfile::Controller,
+            RuntimeProfile::Debug,
+        ] {
+            assert_eq!(
+                binding
+                    .bootstrap_profile(requested)
+                    .expect("controlled bootstrap"),
+                Some(RuntimeProfile::Controlled)
+            );
+        }
+    }
+
+    #[test]
+    fn debug_binding_is_not_a_persisted_authority() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let binding = DeviceBinding::open(directory.path().join("device.json")).expect("binding");
+        binding.bind(RuntimeProfile::Debug).expect("bind debug");
+
+        assert_eq!(binding.require_controller(), Err(LumoError::Unauthorized));
+        assert_eq!(binding.require_controlled(), Err(LumoError::Unauthorized));
+        assert_eq!(
+            binding.bootstrap_profile(RuntimeProfile::Debug),
+            Err(LumoError::Unauthorized)
+        );
     }
 }

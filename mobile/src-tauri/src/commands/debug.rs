@@ -12,5 +12,6 @@ pub async fn debug_apply_scenario(
     scenario: SimulationScenario,
 ) -> CommandResult<AppSnapshot> {
     let backend = state.0.clone();
+    state.1.require_controller()?;
     run_blocking(move || backend.debug_scenario(scenario).map_err(Into::into)).await
 }

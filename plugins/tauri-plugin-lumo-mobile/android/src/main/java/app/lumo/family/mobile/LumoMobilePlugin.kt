@@ -1,6 +1,7 @@
 package app.lumo.family.mobile
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
@@ -64,13 +65,22 @@ class NotificationArgs {
     ],
 )
 class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
+    private var webView: WebView? = null
+
     override fun load(webView: WebView) {
         super.load(webView)
+        this.webView = webView
+        LumoSystemInsets.install(webView)
         LumoNotifications.ensureChannels(activity.applicationContext)
+    }
+
+    override fun onResume() {
+        webView?.let(LumoSystemInsets::refresh)
     }
 
     @Command
     fun getStatus(invoke: Invoke) {
+        webView?.let(LumoSystemInsets::refresh)
         invoke.resolve(LumoDeviceStatus.snapshot(activity.applicationContext))
     }
 
@@ -143,6 +153,10 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
                 invoke.reject("Concede ubicación precisa antes de iniciar el seguimiento")
                 return
             }
+            if (LumoDeviceStatus.backgroundLocationStatus(context) == "denied") {
+                invoke.reject("Selecciona Permitir siempre en los ajustes de ubicación de Lumo")
+                return
+            }
             if (!LumoDeviceStatus.locationServicesEnabled(context)) {
                 invoke.reject("Activa la ubicación del teléfono antes de iniciar el seguimiento")
                 return
@@ -211,12 +225,28 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     @Command
+    @SuppressLint("BatteryLife") // Family-safety tracking is an accepted exemption use case.
     fun openBatterySettings(invoke: Invoke) {
-        runCatching {
-            activity.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-        }.onSuccess {
+        val packageUri = Uri.fromParts("package", activity.packageName, null)
+        val intents =
+            buildList {
+                if (!LumoDeviceStatus.batteryOptimizationDisabled(activity)) {
+                    add(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, packageUri))
+                }
+                add(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                add(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, packageUri))
+            }
+        val opened =
+            intents.any { intent ->
+                runCatching {
+                    activity.startActivity(intent)
+                    true
+                }.getOrDefault(false)
+            }
+
+        if (opened) {
             invoke.resolve()
-        }.onFailure {
+        } else {
             invoke.reject("Android no permite abrir los ajustes de batería")
         }
     }

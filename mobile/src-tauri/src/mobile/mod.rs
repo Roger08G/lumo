@@ -1,7 +1,11 @@
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Runtime, State};
 use tauri_plugin_lumo_mobile::{LumoMobileExt, MobileStatus};
 
-use crate::commands::error::{CommandError, CommandResult};
+use crate::{
+    commands::error::{CommandError, CommandResult},
+    device::DeviceBinding,
+    state::BackendState,
+};
 
 #[cfg(target_os = "android")]
 mod background;
@@ -17,14 +21,14 @@ fn bridge_error(error: tauri_plugin_lumo_mobile::Error) -> CommandError {
     }
 }
 
-fn validate_role(role: &str) -> CommandResult<()> {
-    if matches!(role, "controlled" | "controller") {
-        Ok(())
-    } else {
-        Err(CommandError {
+fn authorize_role(binding: &DeviceBinding, role: &str) -> CommandResult<()> {
+    match role {
+        "controlled" => binding.require_controlled().map_err(Into::into),
+        "controller" => binding.require_controller().map_err(Into::into),
+        _ => Err(CommandError {
             code: "invalid_input",
             message: "unsupported mobile role".to_owned(),
-        })
+        }),
     }
 }
 
@@ -34,8 +38,12 @@ pub fn mobile_get_status(app: AppHandle) -> CommandResult<MobileStatus> {
 }
 
 #[tauri::command]
-pub fn mobile_request_permissions(app: AppHandle, role: String) -> CommandResult<MobileStatus> {
-    validate_role(&role)?;
+pub fn mobile_request_permissions(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    role: String,
+) -> CommandResult<MobileStatus> {
+    authorize_role(&state.1, &role)?;
     app.lumo_mobile()
         .request_permissions(&role)
         .map_err(bridge_error)
@@ -44,11 +52,12 @@ pub fn mobile_request_permissions(app: AppHandle, role: String) -> CommandResult
 #[tauri::command]
 pub fn mobile_configure_tracking(
     app: AppHandle,
+    state: State<'_, BackendState>,
     role: String,
     enabled: bool,
     interval_seconds: Option<u64>,
 ) -> CommandResult<MobileStatus> {
-    validate_role(&role)?;
+    authorize_role(&state.1, &role)?;
     app.lumo_mobile()
         .configure_tracking(&role, enabled, interval_seconds.unwrap_or(30))
         .map_err(bridge_error)
@@ -86,4 +95,57 @@ pub fn mobile_open_battery_settings(app: AppHandle) -> CommandResult<()> {
     app.lumo_mobile()
         .open_battery_settings()
         .map_err(bridge_error)
+}
+
+#[cfg(test)]
+mod tests {
+    use lumo_core::domain::RuntimeProfile;
+
+    use super::*;
+
+    #[test]
+    fn rejects_unknown_mobile_role_before_binding_lookup() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let binding = DeviceBinding::open(directory.path().join("device.json")).expect("binding");
+
+        let error = authorize_role(&binding, "debug").expect_err("reject unknown role");
+        assert_eq!(error.code, "invalid_input");
+    }
+
+    #[test]
+    fn unbound_device_cannot_request_a_mobile_role() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let binding = DeviceBinding::open(directory.path().join("device.json")).expect("binding");
+
+        for role in ["controller", "controlled"] {
+            let error = authorize_role(&binding, role).expect_err("reject unbound device");
+            assert_eq!(error.code, "unauthorized");
+        }
+    }
+
+    #[test]
+    fn controller_binding_only_authorizes_controller_mobile_role() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let binding = DeviceBinding::open(directory.path().join("device.json")).expect("binding");
+        binding
+            .bind(RuntimeProfile::Controller)
+            .expect("bind controller");
+
+        assert!(authorize_role(&binding, "controller").is_ok());
+        let error = authorize_role(&binding, "controlled").expect_err("reject controlled role");
+        assert_eq!(error.code, "unauthorized");
+    }
+
+    #[test]
+    fn controlled_binding_only_authorizes_controlled_mobile_role() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let binding = DeviceBinding::open(directory.path().join("device.json")).expect("binding");
+        binding
+            .bind(RuntimeProfile::Controlled)
+            .expect("bind controlled");
+
+        assert!(authorize_role(&binding, "controlled").is_ok());
+        let error = authorize_role(&binding, "controller").expect_err("reject controller role");
+        assert_eq!(error.code, "unauthorized");
+    }
 }
