@@ -20,7 +20,7 @@ const NavigationStyles = css({
     justifyContent: "space-between",
     padding: "0 3.5rem",
     alignItems: "center",
-    height: "100vh",
+    height: "var(--lumo-viewport-height)",
     margin: "auto 0",
 });
 

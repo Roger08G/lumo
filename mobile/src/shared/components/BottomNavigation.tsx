@@ -32,7 +32,7 @@ export function BottomNavigation({ active, onChange }: BottomNavigationProps) {
                 bottom: 0,
                 display: "grid",
                 gridTemplateColumns: "repeat(4, 1fr)",
-                padding: "7px 8px max(7px, env(safe-area-inset-bottom))",
+                padding: "7px 8px max(7px, var(--lumo-safe-bottom))",
                 borderTop: "1px solid var(--lumo-border)",
                 background: "rgba(255,255,255,.92)",
                 backdropFilter: "blur(16px)",

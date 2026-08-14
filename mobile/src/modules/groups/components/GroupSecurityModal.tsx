@@ -6,6 +6,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useLumo } from "@app/state/lumoContext.ts";
 import { Button, Field, Modal, Pill } from "@shared/components/ui.tsx";
 import type { InvitationData } from "@shared/services/lumoBackend.ts";
+import lumoLogo from "@tauri/icons/icon.png";
 
 export type GroupSecurityAction = "invite" | "leave";
 
@@ -64,21 +65,24 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                     expiresAtMs: Date.now() + 15 * 60_000,
                 } satisfies InvitationData);
             setInvitation(invite);
-            try {
-                localStorage.setItem(
-                    "lumo.preview-invite",
-                    JSON.stringify({
-                        version: 1,
-                        kind: "lumo-group-invite",
-                        name: state.group.name,
-                        code: state.group.code,
-                        supervisorName: state.group.supervisorName,
-                        trackedPersonName: state.group.trackedPersonName,
-                        token: invite.token,
-                    }),
-                );
-            } catch {
-                // The real QR is still usable when browser preview storage is unavailable.
+            if (!backend.isNative()) {
+                try {
+                    localStorage.setItem(
+                        "lumo.preview-invite",
+                        JSON.stringify({
+                            version: 2,
+                            kind: "lumo-group-invite",
+                            name: state.group.name,
+                            code: state.group.code,
+                            invitationId: invite.invitationId,
+                            token: invite.token,
+                            expiresAt: invite.expiresAtMs,
+                            apiOrigin: backend.apiOrigin(),
+                        }),
+                    );
+                } catch {
+                    // Browser preview storage is optional and never used by the native app.
+                }
             }
             setVerified(true);
             setError("");
@@ -121,40 +125,65 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                         css={css({
                             display: "grid",
                             justifyItems: "center",
-                            gap: 13,
-                            padding: "18px 16px",
+                            gap: 15,
+                            padding: "20px 16px 18px",
                             border: "1px solid var(--lumo-border)",
-                            borderRadius: 22,
-                            background: "var(--lumo-bg)",
+                            borderRadius: 24,
+                            background:
+                                "radial-gradient(circle at 50% 0%, rgba(165,131,225,.2), transparent 58%), var(--lumo-bg)",
                         })}
                     >
                         <div
                             css={css({
+                                position: "relative",
+                                width: "min(100%, 246px)",
                                 display: "grid",
                                 placeItems: "center",
-                                padding: 14,
-                                border: "1px solid var(--lumo-border)",
-                                borderRadius: 18,
+                                padding: 12,
+                                border: "1px solid rgba(104,66,166,.14)",
+                                borderRadius: 24,
                                 background: "#fff",
-                                boxShadow: "0 8px 24px rgba(47,38,57,.06)",
+                                boxShadow:
+                                    "0 16px 38px rgba(47,38,57,.1), 0 2px 8px rgba(104,66,166,.08)",
+                                "&::before": {
+                                    content: '""',
+                                    position: "absolute",
+                                    inset: 5,
+                                    border: "1px solid rgba(165,131,225,.13)",
+                                    borderRadius: 19,
+                                    pointerEvents: "none",
+                                },
                             })}
                         >
                             <QRCodeSVG
                                 value={JSON.stringify({
-                                    version: 1,
+                                    version: 2,
                                     kind: "lumo-group-invite",
-                                    name: state.group.name,
-                                    code: state.group.code,
-                                    supervisorName: state.group.supervisorName,
-                                    trackedPersonName: state.group.trackedPersonName,
+                                    invitationId: invitation?.invitationId,
                                     token: invitation?.token,
+                                    expiresAt: invitation?.expiresAtMs,
+                                    apiOrigin: backend.apiOrigin(),
                                 })}
-                                size={166}
-                                level="M"
+                                size={220}
+                                level="H"
+                                boostLevel
                                 bgColor="#ffffff"
                                 fgColor="#2b2630"
-                                marginSize={1}
+                                marginSize={4}
+                                imageSettings={{
+                                    src: lumoLogo,
+                                    width: 38,
+                                    height: 38,
+                                    excavate: true,
+                                }}
                                 title={`Invitación al grupo ${state.group.name}`}
+                                css={css({
+                                    position: "relative",
+                                    zIndex: 1,
+                                    width: "100%",
+                                    height: "auto",
+                                    aspectRatio: "1",
+                                })}
                             />
                         </div>
                         <div css={css({ display: "grid", justifyItems: "center", gap: 3 })}>
@@ -167,6 +196,15 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                                 })}
                             >
                                 {state.group.code}
+                            </span>
+                            <span
+                                css={css({
+                                    marginTop: 3,
+                                    color: "var(--lumo-text-secondary)",
+                                    fontSize: 10,
+                                })}
+                            >
+                                Invitación segura de Lumo
                             </span>
                         </div>
                     </div>

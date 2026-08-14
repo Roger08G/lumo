@@ -18,7 +18,7 @@ const buttonBase = css({
 
 export function GroupButtons({ onCreate, onJoin }: GroupButtonsProps) {
     return (
-        <div css={css({ width: "100%", display: "grid", gap: 12 })}>
+        <div css={css({ width: "100%", display: "grid", gap: 12, padding: "0 0 3rem 0" })}>
             <button
                 type="button"
                 onClick={onCreate}

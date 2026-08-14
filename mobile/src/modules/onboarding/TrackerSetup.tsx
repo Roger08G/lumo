@@ -60,7 +60,10 @@ export function TrackerSetup() {
             return;
         }
         try {
-            const status = await backend.requestMobilePermissions("controlled");
+            const status =
+                key === "batteryProtection"
+                    ? await backend.getMobileStatus()
+                    : await backend.requestMobilePermissions("controlled");
             if (status) dispatch({ type: "SYNC_MOBILE_STATUS", payload: status });
             if (key === "batteryProtection" && !status?.batteryOptimizationDisabled) {
                 await backend.openBatterySettings();
@@ -77,11 +80,10 @@ export function TrackerSetup() {
     return (
         <main
             css={css({
-                minHeight: "100dvh",
+                minHeight: "var(--lumo-viewport-height)",
                 display: "flex",
                 flexDirection: "column",
-                padding:
-                    "max(22px, env(safe-area-inset-top)) 18px max(22px, env(safe-area-inset-bottom))",
+                padding: "max(22px, var(--lumo-safe-top)) 18px max(22px, var(--lumo-safe-bottom))",
                 background: "var(--lumo-bg)",
             })}
         >

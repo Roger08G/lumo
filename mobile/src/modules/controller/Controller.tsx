@@ -42,10 +42,12 @@ import { ProtectedActionModal } from "@modules/groups/components/ProtectedAction
 import { BottomNavigation, type ControllerTab } from "@shared/components/BottomNavigation.tsx";
 import { BrandMark } from "@shared/components/BrandMark.tsx";
 import { StepProgress } from "@shared/components/StepProgress.tsx";
+import { TopSheet } from "@shared/components/TopSheet.tsx";
 import { Button, Field, IconButton, Modal, Pill, Toast, Toggle } from "@shared/components/ui.tsx";
 import { PLACE_PALETTE, PLACE_TONES, randomPlaceTone } from "@shared/styles/placePalette.ts";
 import { surface } from "@shared/styles/surfaces.ts";
 import type { EventKind, Place, PlaceIcon, PlaceTone, TimelineEvent } from "@shared/types/lumo.ts";
+import { formatCoordinates, parseCoordinates } from "@shared/utils/coordinates.ts";
 import { formatClock, formatRelative, greeting } from "@shared/utils/format.ts";
 
 const pulse = keyframes({
@@ -90,9 +92,9 @@ function TripRoute({ from, to }: { from: string; to: string }) {
             aria-label={`Trayecto desde ${from} hasta ${to}`}
             css={css({
                 display: "grid",
-                gridTemplateColumns: "auto minmax(44px, 1fr) auto",
+                gridTemplateColumns: "minmax(0, 96px) minmax(36px, 1fr) minmax(0, 112px)",
                 alignItems: "center",
-                gap: 8,
+                gap: 6,
                 marginTop: 13,
             })}
         >
@@ -946,14 +948,16 @@ function PlaceModal({
     const save = async (event: FormEvent) => {
         event.preventDefault();
         if (step === 0) {
-            if (
-                name.trim().length < 2 ||
-                address.trim().length < 4 ||
-                coordinates.trim().length < 5
-            ) {
-                setError("Completa el nombre, la dirección y las coordenadas");
+            if (name.trim().length < 2 || address.trim().length < 4) {
+                setError("Completa el nombre y la dirección exacta");
                 return;
             }
+            const parsed = parseCoordinates(coordinates);
+            if (!parsed) {
+                setError("Introduce una latitud y una longitud válidas");
+                return;
+            }
+            setCoordinates(formatCoordinates(parsed));
             setError("");
             setStep(1);
             return;
@@ -1029,6 +1033,10 @@ function PlaceModal({
                             label="Coordenadas"
                             placeholder="Latitud, longitud"
                             icon={FiCrosshair}
+                            inputMode="decimal"
+                            autoComplete="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
                             value={coordinates}
                             onChange={(event) => {
                                 setCoordinates(event.target.value);
@@ -1084,7 +1092,14 @@ function PlaceModal({
                             <legend css={css({ marginBottom: 10, fontSize: 12, fontWeight: 500 })}>
                                 Color
                             </legend>
-                            <div css={css({ display: "flex", gap: 12 })}>
+                            <div
+                                css={css({
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    gap: 4,
+                                    "@media (max-width: 300px)": { gap: 1 },
+                                })}
+                            >
                                 {PLACE_TONES.map((tone) => {
                                     const palette = PLACE_PALETTE[tone];
                                     const selected = tone === color;
@@ -1107,6 +1122,10 @@ function PlaceModal({
                                                 borderRadius: 999,
                                                 background: "transparent",
                                                 cursor: "pointer",
+                                                "@media (max-width: 300px)": {
+                                                    width: 40,
+                                                    height: 40,
+                                                },
                                             })}
                                         >
                                             <span
@@ -1141,6 +1160,10 @@ function PlaceModal({
                                     display: "grid",
                                     gridTemplateColumns: "repeat(5, 1fr)",
                                     gap: 8,
+                                    "@media (max-width: 340px)": {
+                                        gridTemplateColumns: "repeat(4, 1fr)",
+                                    },
+                                    "@media (max-width: 300px)": { gap: 4 },
                                 })}
                             >
                                 {PLACE_ICON_OPTIONS.map((option) => {
@@ -1190,7 +1213,8 @@ function PlaceModal({
                 <div
                     css={css({
                         display: "grid",
-                        gridTemplateColumns: step === 0 ? "1fr" : "104px 1fr",
+                        gridTemplateColumns:
+                            step === 0 ? "1fr" : "minmax(88px, 104px) minmax(0, 1fr)",
                         gap: 10,
                     })}
                 >
@@ -1341,7 +1365,7 @@ export function Controller() {
     return (
         <main
             css={css({
-                minHeight: "100dvh",
+                minHeight: "var(--lumo-viewport-height)",
                 display: "flex",
                 flexDirection: "column",
                 background: "var(--lumo-bg)",
@@ -1356,7 +1380,7 @@ export function Controller() {
                     alignItems: "center",
                     justifyContent: "space-between",
                     gap: 12,
-                    padding: "max(14px, env(safe-area-inset-top)) 18px 12px",
+                    padding: "max(14px, var(--lumo-safe-top)) 18px 12px",
                     background: "rgba(248,245,239,.9)",
                     backdropFilter: "blur(14px)",
                 })}
@@ -1420,7 +1444,7 @@ export function Controller() {
 
             <BottomNavigation active={activeTab} onChange={changeTab} />
 
-            <Modal
+            <TopSheet
                 open={notificationsOpen}
                 onClose={() => setNotificationsOpen(false)}
                 eyebrow="Avisos locales"
@@ -1446,7 +1470,7 @@ export function Controller() {
                         Ver toda la actividad
                     </Button>
                 </div>
-            </Modal>
+            </TopSheet>
 
             <PlaceModal
                 open={placeOpen}

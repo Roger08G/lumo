@@ -100,9 +100,11 @@ function App() {
         <LumoProvider>
             <div
                 css={css({
-                    width: "100%",
-                    minHeight: "100dvh",
+                    width: "min(100%, var(--lumo-viewport-width))",
+                    minHeight: "var(--lumo-viewport-height)",
                     margin: "0 auto",
+                    paddingLeft: "var(--lumo-safe-left)",
+                    paddingRight: "var(--lumo-safe-right)",
                     background: "var(--lumo-bg)",
                     "@media (min-width: 540px)": {
                         maxWidth: 480,

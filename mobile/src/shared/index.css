@@ -7,6 +7,19 @@
 }
 
 :root {
+    --lumo-viewport-width: 100dvw;
+    --lumo-viewport-height: 100dvh;
+    --lumo-viewport-offset-left: 0px;
+    --lumo-viewport-offset-top: 0px;
+    --lumo-native-safe-top: 0px;
+    --lumo-native-safe-right: 0px;
+    --lumo-native-safe-bottom: 0px;
+    --lumo-native-safe-left: 0px;
+    --lumo-safe-top: max(env(safe-area-inset-top, 0px), var(--lumo-native-safe-top));
+    --lumo-safe-right: max(env(safe-area-inset-right, 0px), var(--lumo-native-safe-right));
+    --lumo-safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--lumo-native-safe-bottom));
+    --lumo-safe-left: max(env(safe-area-inset-left, 0px), var(--lumo-native-safe-left));
+
     font-family:
         "Rubik",
         ui-rounded,
@@ -48,15 +61,16 @@
 }
 
 html {
-    min-width: 320px;
-    min-height: 100%;
+    width: 100%;
+    min-width: 0;
+    min-height: var(--lumo-viewport-height);
     background: #ede7f2;
 }
 
 body {
-    min-width: 320px;
-    min-height: 100vh;
-    min-height: 100dvh;
+    width: 100%;
+    min-width: 0;
+    min-height: var(--lumo-viewport-height);
     margin: 0;
     overflow-x: hidden;
     overscroll-behavior-y: none;
@@ -118,8 +132,7 @@ p {
 
 #root {
     width: 100%;
-    min-height: 100vh;
-    min-height: 100dvh;
+    min-height: var(--lumo-viewport-height);
 }
 
 ::selection {

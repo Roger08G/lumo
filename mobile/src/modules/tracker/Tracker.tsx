@@ -10,6 +10,7 @@ import {
     FiLogOut,
     FiMapPin,
     FiPhone,
+    FiRefreshCw,
     FiSettings,
     FiShield,
     FiSmartphone,
@@ -99,6 +100,7 @@ export function Tracker() {
     const [pin, setPin] = useState("");
     const [pinError, setPinError] = useState("");
     const [unlocking, setUnlocking] = useState(false);
+    const [reactivating, setReactivating] = useState(false);
     const [toast, setToast] = useState<{ title: string; detail?: string } | null>(null);
     const permissionOk = state.mobile
         ? state.mobile.preciseLocation === "granted" &&
@@ -109,7 +111,10 @@ export function Tracker() {
     const connectionOk = state.demo.connection === "online";
     const batteryPercent = state.mobile?.batteryPercent ?? state.demo.battery;
     const batteryOk = batteryPercent > 15;
-    const allGood = permissionOk && trackingOk && connectionOk && batteryOk;
+    const batteryProtectionOk =
+        state.mobile?.batteryOptimizationDisabled ??
+        state.preferences.trackerConsents.batteryProtection;
+    const allGood = permissionOk && trackingOk && connectionOk && batteryOk && batteryProtectionOk;
     const supervisorName = state.group.supervisorName || "tu supervisor";
     const statusMessage = allGood
         ? `Tu ubicación se está compartiendo con ${supervisorName}.`
@@ -117,9 +122,11 @@ export function Tracker() {
           ? "El seguimiento está detenido. Actívalo desde los ajustes protegidos."
           : !permissionOk
             ? `La ubicación está desactivada. ${supervisorName} no puede ver tu posición actual.`
-            : !connectionOk
-              ? "No hay conexión disponible. Lumo lo intentará de nuevo automáticamente."
-              : "La batería está baja. Conecta este teléfono para mantener la protección activa.";
+            : !batteryProtectionOk
+              ? "Android puede detener Lumo para ahorrar batería. Activa la protección para mantener el seguimiento."
+              : !connectionOk
+                ? "No hay conexión disponible. Lumo lo intentará de nuevo automáticamente."
+                : "La batería está baja. Conecta este teléfono para mantener la protección activa.";
 
     const unlock = async () => {
         setUnlocking(true);
@@ -143,14 +150,51 @@ export function Tracker() {
         window.setTimeout(() => setSecurityAction(action), 220);
     };
 
+    const openBatteryProtection = async () => {
+        try {
+            await backend.openBatterySettings();
+        } catch (requestError) {
+            setToast({
+                title: "No se han podido abrir los ajustes",
+                detail: requestError instanceof Error ? requestError.message : "Inténtalo de nuevo",
+            });
+        }
+    };
+
+    const reactivateTracking = async () => {
+        setReactivating(true);
+        try {
+            const result = await backend.setControlledTracking(true);
+            if (result.status) {
+                dispatch({ type: "SYNC_MOBILE_STATUS", payload: result.status });
+            }
+            if (result.snapshot) {
+                dispatch({ type: "HYDRATE_BACKEND", payload: result.snapshot });
+            }
+            setToast({
+                title: "Seguimiento reactivado",
+                detail: "Lumo vuelve a compartir la ubicación de este teléfono.",
+            });
+        } catch (requestError) {
+            setToast({
+                title: "No se ha podido reactivar",
+                detail:
+                    requestError instanceof Error
+                        ? requestError.message
+                        : "Revisa los permisos de Android",
+            });
+        } finally {
+            setReactivating(false);
+        }
+    };
+
     return (
         <main
             css={css({
-                minHeight: "100dvh",
+                minHeight: "var(--lumo-viewport-height)",
                 display: "flex",
                 flexDirection: "column",
-                padding:
-                    "max(18px, env(safe-area-inset-top)) 17px max(22px, env(safe-area-inset-bottom))",
+                padding: "max(18px, var(--lumo-safe-top)) 17px max(22px, var(--lumo-safe-bottom))",
                 background:
                     "radial-gradient(circle at 50% -8%, rgba(165,131,225,.22), transparent 32%), var(--lumo-bg)",
             })}
@@ -166,7 +210,7 @@ export function Tracker() {
                 <div css={css({ display: "flex", alignItems: "center", gap: 10 })}>
                     <BrandMark size="small" />
                     <div css={css({ display: "grid", gap: 2 })}>
-                        <strong css={css({ fontSize: 17, letterSpacing: "-.03em" })}>lumo</strong>
+                        <strong css={css({ fontSize: 17, letterSpacing: "-.03em" })}>Lumo</strong>
                         <span css={css({ color: "var(--lumo-text-muted)", fontSize: 9 })}>
                             Protección familiar
                         </span>
@@ -223,9 +267,11 @@ export function Tracker() {
                     >
                         {allGood
                             ? "Todo está en orden"
-                            : batteryOk
-                              ? "Lumo no puede compartir tu ubicación"
-                              : "Este teléfono necesita batería"}
+                            : !batteryOk
+                              ? "Este teléfono necesita batería"
+                              : !batteryProtectionOk
+                                ? "Completa la protección de batería"
+                                : "Lumo no puede compartir tu ubicación"}
                     </h1>
                     <p
                         css={css({
@@ -239,6 +285,31 @@ export function Tracker() {
                     </p>
                 </div>
             </section>
+
+            {!trackingOk && (
+                <Button
+                    fullWidth
+                    variant="secondary"
+                    icon={FiRefreshCw}
+                    loading={reactivating}
+                    css={css({ marginTop: 12 })}
+                    onClick={() => void reactivateTracking()}
+                >
+                    Reactivar seguimiento
+                </Button>
+            )}
+
+            {!batteryProtectionOk && (
+                <Button
+                    fullWidth
+                    variant="secondary"
+                    icon={FiBattery}
+                    css={css({ marginTop: 12 })}
+                    onClick={() => void openBatteryProtection()}
+                >
+                    Proteger Lumo del ahorro de batería
+                </Button>
+            )}
 
             <section css={css(card, { marginTop: 16, padding: "3px 15px" })}>
                 <CheckRow
@@ -314,6 +385,25 @@ export function Tracker() {
                     />
                 </span>
                 <strong css={css({ fontSize: 14 })}>{batteryPercent} %</strong>
+            </section>
+
+            <section
+                css={css(card, {
+                    marginTop: 12,
+                    marginBottom: 18,
+                    padding: "4px 14px",
+                })}
+            >
+                <Toggle
+                    label="Protección de batería"
+                    description={
+                        batteryProtectionOk
+                            ? "Android permite que Lumo siga activo"
+                            : "Evita que el ahorro de energía detenga Lumo"
+                    }
+                    checked={batteryProtectionOk}
+                    onChange={() => void openBatteryProtection()}
+                />
             </section>
 
             <Button
@@ -428,20 +518,8 @@ export function Tracker() {
                         <Toggle
                             label="Protección de batería"
                             description="Evita que Android detenga el seguimiento"
-                            checked={state.mobile?.batteryOptimizationDisabled ?? false}
-                            onChange={async () => {
-                                try {
-                                    await backend.openBatterySettings();
-                                } catch (requestError) {
-                                    setToast({
-                                        title: "No se han podido abrir los ajustes",
-                                        detail:
-                                            requestError instanceof Error
-                                                ? requestError.message
-                                                : "Inténtalo de nuevo",
-                                    });
-                                }
-                            }}
+                            checked={batteryProtectionOk}
+                            onChange={() => void openBatteryProtection()}
                         />
                     </article>
                     {state.group.role === "supervisor" && (

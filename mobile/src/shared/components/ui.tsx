@@ -97,6 +97,7 @@ export function Button({
                         "transform .2s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease",
                     "&:active:not(:disabled)": { transform: "translateY(1px)" },
                     "&:disabled": { opacity: 0.55, cursor: "not-allowed", boxShadow: "none" },
+                    "@media (max-width: 340px)": { padding: "0 14px", fontSize: 14 },
                 },
                 buttonVariants[variant],
             )}
@@ -222,7 +223,11 @@ export function Field({ label, icon: Icon, trailing, error, id, ...props }: Fiel
                         outline: 0,
                         color: "var(--lumo-text)",
                         background: "transparent",
-                        fontSize: 15,
+                        fontSize: 16,
+                        appearance: "none",
+                        boxShadow: "none",
+                        "&:focus": { outline: "none" },
+                        "&:focus-visible": { outline: "none" },
                         "&::placeholder": { color: "#9b94a1" },
                     })}
                     aria-invalid={Boolean(error)}
@@ -281,7 +286,12 @@ export function Modal({ open, onClose, title, eyebrow, children, compact = false
             onComplete: () => setMounted(false),
             defaults: { overwrite: true },
         });
-        timeline.to(panelRef.current, { y: 28, opacity: 0, duration: 0.2, ease: "power2.in" });
+        timeline.to(panelRef.current, {
+            y: -24,
+            opacity: 0,
+            duration: 0.2,
+            ease: "power2.in",
+        });
         timeline.to(
             backdropRef.current,
             { opacity: 0, duration: 0.16, ease: "power1.out" },
@@ -309,7 +319,7 @@ export function Modal({ open, onClose, title, eyebrow, children, compact = false
         );
         timeline.fromTo(
             panelRef.current,
-            { y: 34, opacity: 0, scale: 0.985 },
+            { y: -28, opacity: 0, scale: 0.985 },
             { y: 0, opacity: 1, scale: 1, duration: 0.4, ease: "power3.out" },
             "-=0.16",
         );
@@ -325,6 +335,22 @@ export function Modal({ open, onClose, title, eyebrow, children, compact = false
         const previousOverflow = document.body.style.overflow;
         document.body.style.overflow = "hidden";
 
+        const keepFocusedFieldVisible = () => {
+            window.requestAnimationFrame(() => {
+                const activeElement = document.activeElement;
+                if (
+                    activeElement instanceof HTMLElement &&
+                    activeElement.matches("input, textarea, select") &&
+                    panelRef.current?.contains(activeElement)
+                ) {
+                    activeElement.scrollIntoView({ block: "nearest", behavior: "auto" });
+                }
+            });
+        };
+        window.visualViewport?.addEventListener("resize", keepFocusedFieldVisible, {
+            passive: true,
+        });
+
         const focusTimeout = window.setTimeout(() => {
             const firstFocusable =
                 panelRef.current?.querySelector<HTMLElement>("[autofocus]") ??
@@ -338,10 +364,15 @@ export function Modal({ open, onClose, title, eyebrow, children, compact = false
 
         return () => {
             window.clearTimeout(focusTimeout);
+            window.visualViewport?.removeEventListener("resize", keepFocusedFieldVisible);
             document.body.style.overflow = previousOverflow;
             previousFocusRef.current?.focus();
         };
     }, [open]);
+
+    useEffect(() => {
+        if (open) panelRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    }, [open, title]);
 
     useEffect(() => {
         if (!mounted) return;
@@ -381,13 +412,16 @@ export function Modal({ open, onClose, title, eyebrow, children, compact = false
             }}
             css={css({
                 position: "fixed",
-                inset: 0,
+                top: "var(--lumo-viewport-offset-top)",
+                left: "var(--lumo-viewport-offset-left)",
+                width: "var(--lumo-viewport-width)",
+                height: "var(--lumo-viewport-height)",
                 zIndex: 50,
                 display: "flex",
-                alignItems: "flex-end",
+                alignItems: "flex-start",
                 justifyContent: "center",
                 padding:
-                    "20px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left))",
+                    "max(12px, var(--lumo-safe-top)) max(12px, var(--lumo-safe-right)) 12px max(12px, var(--lumo-safe-left))",
                 background: "rgba(34, 28, 40, .38)",
                 backdropFilter: "blur(8px)",
                 "@media (min-width: 540px)": { alignItems: "center", padding: 24 },
@@ -400,15 +434,24 @@ export function Modal({ open, onClose, title, eyebrow, children, compact = false
                 aria-label={modalContent.title}
                 css={css({
                     width: "min(100%, 460px)",
-                    maxHeight: "min(88dvh, 760px)",
+                    maxHeight:
+                        "min(calc(var(--lumo-viewport-height) - max(24px, var(--lumo-safe-top))), 760px)",
                     overscrollBehavior: "contain",
                     overflowY: "auto",
-                    padding: compact ? "20px" : "24px 20px max(24px, env(safe-area-inset-bottom))",
+                    scrollPadding: 16,
+                    padding: compact ? "20px" : "24px 20px",
                     border: "1px solid rgba(255,255,255,.8)",
-                    borderRadius: "26px 26px 0 0",
+                    borderRadius: 26,
                     background: "#fff",
-                    boxShadow: "0 -20px 60px rgba(37,29,48,.2)",
+                    boxShadow: "0 20px 60px rgba(37,29,48,.2)",
                     "@media (min-width: 540px)": { borderRadius: 26, padding: compact ? 20 : 24 },
+                    "@media (max-width: 340px)": {
+                        padding: compact ? 16 : "20px 16px",
+                    },
+                    "@media (max-height: 480px)": {
+                        paddingTop: 18,
+                        paddingBottom: 18,
+                    },
                 })}
             >
                 <header
@@ -534,7 +577,7 @@ export function Toast({ title, detail, onClose }: ToastProps) {
                 position: "fixed",
                 zIndex: 70,
                 left: "50%",
-                bottom: "max(92px, calc(env(safe-area-inset-bottom) + 78px))",
+                bottom: "max(92px, calc(var(--lumo-safe-bottom) + 78px))",
                 width: "min(calc(100% - 32px), 420px)",
                 display: "flex",
                 alignItems: "flex-start",

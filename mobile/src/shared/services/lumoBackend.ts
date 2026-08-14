@@ -9,6 +9,7 @@ import type {
     MobileRuntimeStatus,
     Place,
 } from "@shared/types/lumo.ts";
+import { parseCoordinates } from "@shared/utils/coordinates.ts";
 
 type RuntimeProfile = "controller" | "controlled" | "debug";
 
@@ -103,6 +104,16 @@ declare global {
 const isNative = () => typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 const isMobileNative = () =>
     isNative() && /Android|iPhone|iPad|iPod/i.test(window.navigator.userAgent);
+
+const configuredApiOrigin = (() => {
+    const value = import.meta.env.VITE_LUMO_API_ORIGIN;
+    if (!value) return null;
+    try {
+        return new URL(value).origin;
+    } catch {
+        return null;
+    }
+})();
 
 async function ensureLocationPermission() {
     if (!isMobileNative()) return;
@@ -250,12 +261,13 @@ function hydrate(snapshot: BackendSnapshot): BackendHydration {
 }
 
 function toCreatePlaceInput(place: Place): CreatePlaceInput {
-    const [latitude, longitude] = place.coordinates.split(",").map((value) => Number(value.trim()));
+    const parsed = parseCoordinates(place.coordinates);
+    if (!parsed) throw new Error("Introduce una latitud y una longitud válidas");
     return {
         name: place.name,
         address: place.address,
-        latitude,
-        longitude,
+        latitude: parsed.latitude,
+        longitude: parsed.longitude,
         radiusM: 50,
         kind: place.kind,
         color: place.color,
@@ -304,6 +316,7 @@ function normalizedPhone(number: string) {
 export const lumoBackend = {
     isNative,
     isMobileNative,
+    apiOrigin: () => configuredApiOrigin,
 
     async scanInvitation() {
         if (!isMobileNative()) return null;
@@ -332,15 +345,30 @@ export const lumoBackend = {
             code?: string;
             supervisorName?: string;
             trackedPersonName?: string;
+            invitationId?: string;
             token?: string;
+            expiresAt?: number;
+            apiOrigin?: string;
         };
-        if (
-            value.version !== 1 ||
-            value.kind !== "lumo-group-invite" ||
-            !value.name ||
-            !value.code ||
-            !value.token
-        ) {
+        const validLegacy =
+            !isMobileNative() &&
+            value.version === 1 &&
+            Boolean(value.name && value.code && value.token);
+        const validCurrent =
+            value.version === 2 &&
+            configuredApiOrigin !== null &&
+            value.apiOrigin === configuredApiOrigin &&
+            typeof value.invitationId === "string" &&
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+                value.invitationId,
+            ) &&
+            typeof value.token === "string" &&
+            /^[A-Za-z0-9_-]{43}$/.test(value.token) &&
+            typeof value.expiresAt === "number" &&
+            Number.isSafeInteger(value.expiresAt) &&
+            value.expiresAt > Date.now() &&
+            value.expiresAt <= Date.now() + 60 * 60_000;
+        if (value.kind !== "lumo-group-invite" || (!validLegacy && !validCurrent)) {
             throw new Error("El código QR no contiene una invitación válida");
         }
         return value;
