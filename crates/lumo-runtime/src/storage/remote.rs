@@ -1251,7 +1251,9 @@ fn install_new_file(temporary: &Path, destination: &Path) -> LumoResult<()> {
         let _ = fs::remove_file(temporary);
         return Err(storage_error(error));
     }
-    #[cfg(unix)]
+    // Android guarantees the app-private file sandbox, but not every OEM allows opening the
+    // containing directory for fsync. The payload itself was synced before the atomic rename.
+    #[cfg(all(unix, not(target_os = "android")))]
     {
         let parent = destination.parent().ok_or_else(|| {
             LumoError::Storage("pending controlled operation path has no parent".to_owned())
