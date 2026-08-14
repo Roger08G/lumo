@@ -2,8 +2,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use lumo_api::{build_app, config::ApiConfig};
 use lumo_core::{
-    application::{CreateGroupInput, ReportLocationInput},
-    domain::{CommandStatus, RuntimeProfile},
+    application::{CreateGroupInput, CreatePlaceInput, ReportLocationInput},
+    domain::{CommandStatus, PlaceIcon, PlaceKind, PlaceTone, RuntimeProfile},
 };
 use lumo_runtime::{FixedClock, LocalBackend, RemoteRepository};
 use tempfile::tempdir;
@@ -83,6 +83,37 @@ async fn remote_repository_connects_controller_and_controlled_clients() {
             .expect("recreate remote group");
         assert!(recreated.session.is_some());
         assert!(recreated.revision > empty.revision);
+
+        let created_place = controller
+            .create_place(CreatePlaceInput {
+                name: "Biblioteca".into(),
+                address: "Calle Nueva, 8".into(),
+                latitude: 40.416_775,
+                longitude: -3.703_79,
+                radius_m: 50,
+                kind: PlaceKind::Place,
+                color: PlaceTone::Blue,
+                icon: PlaceIcon::School,
+            })
+            .expect("create remote place");
+        assert_eq!(created_place.name, "Biblioteca");
+
+        let updated_place = controller
+            .update_place(
+                &created_place.id,
+                CreatePlaceInput {
+                    name: "Biblioteca central".into(),
+                    address: created_place.address.clone(),
+                    latitude: created_place.latitude,
+                    longitude: created_place.longitude,
+                    radius_m: 50,
+                    kind: created_place.kind,
+                    color: created_place.color,
+                    icon: created_place.icon,
+                },
+            )
+            .expect("update remote place");
+        assert_eq!(updated_place.name, "Biblioteca central");
     })
     .await
     .expect("blocking client task");

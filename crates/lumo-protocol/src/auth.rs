@@ -68,9 +68,6 @@ impl RequestAuthenticator {
         now_ms: i64,
         headers: &SignedHeaders,
     ) -> LumoResult<()> {
-        if now_ms.abs_diff(headers.timestamp_ms) > MAX_CLOCK_SKEW_MS as u64 {
-            return Err(LumoError::ExpiredMessage);
-        }
         if headers.nonce.len() != NONCE_LENGTH || headers.signature.len() != SIGNATURE_LENGTH {
             return Err(LumoError::AuthenticationFailed);
         }
@@ -85,6 +82,9 @@ impl RequestAuthenticator {
         verifier
             .verify_slice(&received)
             .or(Err(LumoError::AuthenticationFailed))?;
+        if now_ms.abs_diff(headers.timestamp_ms) > MAX_CLOCK_SKEW_MS as u64 {
+            return Err(LumoError::ExpiredMessage);
+        }
         Ok(())
     }
 

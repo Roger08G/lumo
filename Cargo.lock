@@ -2512,6 +2512,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower",
+ "uuid",
  "zeroize",
 ]
 
@@ -2560,6 +2561,7 @@ dependencies = [
  "lumo-core",
  "rand 0.8.7",
  "serde",
+ "serde_json",
  "sha2",
  "thiserror 2.0.20",
  "uuid",
