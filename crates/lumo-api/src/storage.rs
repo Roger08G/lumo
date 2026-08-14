@@ -2,6 +2,7 @@ use std::{
     fs,
     path::Path,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use lumo_core::{LumoError, LumoResult};
@@ -30,10 +31,16 @@ impl ApiStore {
         }
         let connection = Connection::open(path).map_err(storage_error)?;
         connection
+            .busy_timeout(Duration::from_secs(3))
+            .map_err(storage_error)?;
+        connection.set_prepared_statement_cache_capacity(16);
+        connection
             .execute_batch(
                 "PRAGMA journal_mode = WAL;
+                 PRAGMA synchronous = NORMAL;
                  PRAGMA journal_size_limit = 16777216;
                  PRAGMA wal_autocheckpoint = 256;
+                 PRAGMA temp_store = MEMORY;
                  CREATE TABLE IF NOT EXISTS remote_state (
                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                     revision INTEGER NOT NULL,
@@ -59,12 +66,32 @@ impl ApiStore {
             )
             .optional()
             .map_err(storage_error)?;
-        encoded
+        let record: Option<RemoteStateRecord> = encoded
             .map(|bytes| {
                 serde_json::from_slice(&bytes)
                     .map_err(|error| LumoError::Storage(format!("invalid state record: {error}")))
             })
-            .transpose()
+            .transpose()?;
+        if let Some(record) = &record {
+            record.validate().map_err(|_| {
+                LumoError::Storage("persisted state record failed validation".to_owned())
+            })?;
+        }
+        Ok(record)
+    }
+
+    pub fn healthcheck(&self) -> LumoResult<()> {
+        let connection = self
+            .connection
+            .lock()
+            .map_err(|_| LumoError::Storage("API database lock poisoned".to_owned()))?;
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM remote_state WHERE singleton = 1",
+                [],
+                |_row| Ok(()),
+            )
+            .map_err(storage_error)
     }
 
     pub fn compare_and_swap(

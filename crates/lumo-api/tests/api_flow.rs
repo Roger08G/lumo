@@ -2,7 +2,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use axum::{
     body::{to_bytes, Body},
-    http::{Method, Request, StatusCode},
+    http::{header::ETAG, header::IF_NONE_MATCH, Method, Request, StatusCode},
 };
 use lumo_api::{
     auth::{NONCE_HEADER, SIGNATURE_HEADER, TIMESTAMP_HEADER},
@@ -10,12 +10,44 @@ use lumo_api::{
     config::ApiConfig,
 };
 use lumo_core::security::SealedPayload;
-use lumo_protocol::{PutStateRequest, RemoteStateRecord, RequestAuthenticator, STATE_PATH};
+use lumo_protocol::{
+    CompactPutStateRequest, CompactRemoteStateRecord, HealthResponse, PutStateRequest,
+    RemoteStateRecord, RequestAuthenticator, COMPACT_STATE_PATH, HEALTH_PATH, STATE_PATH,
+};
 use tempfile::tempdir;
 use tower::ServiceExt;
 use zeroize::Zeroizing;
 
 const PASSWORD: &str = "test-password-with-enough-entropy";
+
+#[tokio::test]
+async fn health_endpoint_checks_the_database_without_authentication() {
+    let directory = tempdir().expect("temporary directory");
+    let config = ApiConfig {
+        bind: "127.0.0.1:0".parse().expect("bind"),
+        database_path: directory.path().join("api.sqlite3"),
+        tls_cert_path: PathBuf::new(),
+        tls_key_path: PathBuf::new(),
+        password: Zeroizing::new(PASSWORD.to_owned()),
+    };
+    let response = build_app(&config)
+        .expect("app")
+        .oneshot(
+            Request::builder()
+                .uri(HEALTH_PATH)
+                .body(Body::empty())
+                .expect("health request"),
+        )
+        .await
+        .expect("health response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("health body");
+    let health: HealthResponse = serde_json::from_slice(&body).expect("health json");
+    assert_eq!(health.status, "ok");
+    assert_eq!(health.api_version, "v1");
+}
 
 #[tokio::test]
 async fn signed_encrypted_state_round_trip_rejects_replay_and_conflicts() {
@@ -57,11 +89,26 @@ async fn signed_encrypted_state_round_trip_rejects_replay_and_conflicts() {
         .await
         .expect("get");
     assert_eq!(response.status(), StatusCode::OK);
+    let etag = response.headers().get(ETAG).expect("etag").clone();
     let bytes = to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("response body");
     let loaded: RemoteStateRecord = serde_json::from_slice(&bytes).expect("record");
     assert_eq!(loaded, request.record);
+
+    let mut conditional = signed(Method::GET, STATE_PATH, Vec::new());
+    conditional.headers_mut().insert(IF_NONE_MATCH, etag);
+    let response = app
+        .clone()
+        .oneshot(conditional)
+        .await
+        .expect("conditional get");
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        response.headers()["cache-control"],
+        "no-store",
+        "conditional responses must not be stored by intermediaries"
+    );
 
     let stale_revision = PutStateRequest {
         expected_revision: Some(1),
@@ -88,6 +135,61 @@ async fn signed_encrypted_state_round_trip_rejects_replay_and_conflicts() {
         .await
         .expect("conflict");
     assert_eq!(response.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn compact_v1_round_trip_uses_base64_and_etags() {
+    let directory = tempdir().expect("temporary directory");
+    let config = ApiConfig {
+        bind: "127.0.0.1:0".parse().expect("bind"),
+        database_path: directory.path().join("api.sqlite3"),
+        tls_cert_path: PathBuf::new(),
+        tls_key_path: PathBuf::new(),
+        password: Zeroizing::new(PASSWORD.to_owned()),
+    };
+    let app = build_app(&config).expect("app");
+    let legacy = PutStateRequest {
+        expected_revision: None,
+        record: RemoteStateRecord {
+            revision: 1,
+            envelope: SealedPayload {
+                version: 1,
+                message_id: "f47ac10b-58cc-4372-a567-0e02b2c3d479".into(),
+                issued_at_ms: 1,
+                expires_at_ms: i64::MAX,
+                nonce: vec![7; 24],
+                ciphertext: vec![42; 4_096],
+            },
+        },
+    };
+    let compact = CompactPutStateRequest::from(&legacy);
+    let body = serde_json::to_vec(&compact).expect("compact body");
+    let legacy_body = serde_json::to_vec(&legacy).expect("legacy body");
+    assert!(body.len() * 2 < legacy_body.len());
+
+    let response = app
+        .clone()
+        .oneshot(signed(Method::PUT, COMPACT_STATE_PATH, body))
+        .await
+        .expect("compact put");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(response.headers().contains_key(ETAG));
+
+    let response = app
+        .oneshot(signed(Method::GET, COMPACT_STATE_PATH, Vec::new()))
+        .await
+        .expect("compact get");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("compact response");
+    let json: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+    assert!(json["envelope"]["ciphertext"].is_string());
+    let compact: CompactRemoteStateRecord = serde_json::from_slice(&bytes).expect("record");
+    assert_eq!(
+        RemoteStateRecord::try_from(compact).expect("legacy"),
+        legacy.record
+    );
 }
 
 #[tokio::test]

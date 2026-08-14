@@ -18,6 +18,10 @@ use crate::{
 const INVITE_TTL_MS: i64 = 10 * 60 * 1_000;
 const MAX_PIN_ATTEMPTS: u8 = 5;
 const PIN_LOCK_MS: i64 = 5 * 60 * 1_000;
+const BATTERY_WARNING_COOLDOWN_MS: i64 = 60 * 60 * 1_000;
+const BATTERY_WARNING_TITLE: &str = "Batería baja";
+const MAX_COMMANDS: usize = 100;
+const MAX_LOCATION_FUTURE_SKEW_MS: i64 = 5 * 60 * 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -386,6 +390,21 @@ impl LumoService {
         }
 
         let captured_at_ms = input.captured_at_ms.unwrap_or(now_ms);
+        if captured_at_ms < now_ms.saturating_sub(EVENT_TTL_MS)
+            || captured_at_ms > now_ms.saturating_add(MAX_LOCATION_FUTURE_SKEW_MS)
+        {
+            return Err(LumoError::InvalidInput(
+                "location timestamp is outside the accepted window".to_owned(),
+            ));
+        }
+        if state
+            .controlled
+            .last_location
+            .as_ref()
+            .is_some_and(|location| location.captured_at_ms >= captured_at_ms)
+        {
+            return Ok(());
+        }
         let next_place = containing_place(&state.places, input.latitude, input.longitude)
             .map(|place| (place.id.clone(), place.name.clone()));
         let previous_place_id = state.controlled.current_place_id.clone();
@@ -443,11 +462,19 @@ impl LumoService {
         state.controlled.battery_percent = input.battery_percent;
         state.controlled.connectivity = Connectivity::Online;
         state.controlled.last_seen_at_ms = Some(now_ms);
-        if input.battery_percent <= 15 {
+        if input.battery_percent <= 15
+            && !has_recent_event(
+                state,
+                EventKind::Warning,
+                BATTERY_WARNING_TITLE,
+                now_ms,
+                BATTERY_WARNING_COOLDOWN_MS,
+            )
+        {
             add_event(
                 state,
                 EventKind::Warning,
-                "Batería baja",
+                BATTERY_WARNING_TITLE,
                 &format!("Queda un {} %", input.battery_percent),
                 None,
                 now_ms,
@@ -461,6 +488,12 @@ impl LumoService {
 
     pub fn request_location(&self, state: &mut RuntimeState, now_ms: i64) -> LumoResult<String> {
         ensure_group(state)?;
+        purge_expired(state, now_ms);
+        if let Some(command) = state.commands.iter().find(|command| {
+            command.kind == CommandKind::Locate && command.status == CommandStatus::Queued
+        }) {
+            return Ok(command.id.clone());
+        }
         let id = Uuid::new_v4().to_string();
         state.commands.push(PendingCommand {
             id: id.clone(),
@@ -470,6 +503,7 @@ impl LumoService {
             completed_at_ms: None,
             error_code: None,
         });
+        trim_commands(state);
         bump_revision(state);
         Ok(id)
     }
@@ -634,6 +668,20 @@ fn add_event(
     state.events.truncate(200);
 }
 
+fn has_recent_event(
+    state: &RuntimeState,
+    kind: EventKind,
+    title: &str,
+    now_ms: i64,
+    cooldown_ms: i64,
+) -> bool {
+    state.events.iter().any(|event| {
+        event.kind == kind
+            && event.title == title
+            && now_ms.saturating_sub(event.occurred_at_ms) < cooldown_ms
+    })
+}
+
 fn purge_expired(state: &mut RuntimeState, now_ms: i64) {
     state
         .events
@@ -645,6 +693,24 @@ fn purge_expired(state: &mut RuntimeState, now_ms: i64) {
         command.status == CommandStatus::Queued
             || now_ms.saturating_sub(command.completed_at_ms.unwrap_or(command.created_at_ms))
                 < EVENT_TTL_MS
+    });
+    trim_commands(state);
+}
+
+fn trim_commands(state: &mut RuntimeState) {
+    let completed_to_remove = state.commands.len().saturating_sub(MAX_COMMANDS);
+    if completed_to_remove == 0 {
+        return;
+    }
+
+    let mut remaining = completed_to_remove;
+    state.commands.retain(|command| {
+        if remaining > 0 && command.status != CommandStatus::Queued {
+            remaining -= 1;
+            false
+        } else {
+            true
+        }
     });
 }
 
@@ -810,6 +876,169 @@ mod tests {
             .expect("group");
         let snapshot = service.snapshot(&mut state, RuntimeProfile::Controller, EVENT_TTL_MS + 1);
         assert!(snapshot.events.is_empty());
+    }
+
+    #[test]
+    fn battery_warnings_are_throttled_but_repeat_after_the_cooldown() {
+        let service = LumoService;
+        let mut state = RuntimeState::default();
+        service
+            .create_group(&mut state, group_input(), 1)
+            .expect("group");
+        service
+            .set_tracking(
+                &mut state,
+                SetTrackingInput {
+                    precise_permission: PermissionState::Granted,
+                    background_permission: PermissionState::Granted,
+                    battery_optimization_disabled: true,
+                    enabled: true,
+                },
+                2,
+            )
+            .expect("tracking");
+        let location = ReportLocationInput {
+            latitude: 40.4168,
+            longitude: -3.7038,
+            accuracy_m: 8.0,
+            battery_percent: 12,
+            captured_at_ms: None,
+        };
+
+        service
+            .report_location(&mut state, location.clone(), 3)
+            .expect("first warning");
+        service
+            .report_location(&mut state, location.clone(), 4)
+            .expect("throttled warning");
+        service
+            .report_location(&mut state, location, 3 + BATTERY_WARNING_COOLDOWN_MS)
+            .expect("warning after cooldown");
+
+        assert_eq!(
+            state
+                .events
+                .iter()
+                .filter(|event| event.title == BATTERY_WARNING_TITLE)
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn stale_location_samples_never_replace_a_newer_position() {
+        let service = LumoService;
+        let mut state = RuntimeState::default();
+        service
+            .create_group(&mut state, group_input(), 1)
+            .expect("group");
+        service
+            .set_tracking(
+                &mut state,
+                SetTrackingInput {
+                    precise_permission: PermissionState::Granted,
+                    background_permission: PermissionState::Granted,
+                    battery_optimization_disabled: true,
+                    enabled: true,
+                },
+                2,
+            )
+            .expect("tracking");
+        service
+            .report_location(
+                &mut state,
+                ReportLocationInput {
+                    latitude: 40.4168,
+                    longitude: -3.7038,
+                    accuracy_m: 8.0,
+                    battery_percent: 80,
+                    captured_at_ms: Some(10_000),
+                },
+                10_000,
+            )
+            .expect("current location");
+        let revision = state.revision;
+
+        service
+            .report_location(
+                &mut state,
+                ReportLocationInput {
+                    latitude: 41.0,
+                    longitude: -4.0,
+                    accuracy_m: 8.0,
+                    battery_percent: 79,
+                    captured_at_ms: Some(9_000),
+                },
+                11_000,
+            )
+            .expect("stale sample ignored");
+
+        let location = state.controlled.last_location.expect("last location");
+        assert_eq!(location.latitude, 40.4168);
+        assert_eq!(location.captured_at_ms, 10_000);
+        assert_eq!(state.revision, revision);
+    }
+
+    #[test]
+    fn location_timestamp_must_be_recent_and_not_far_in_the_future() {
+        let service = LumoService;
+        let mut state = RuntimeState::default();
+        service
+            .create_group(&mut state, group_input(), 1)
+            .expect("group");
+        service
+            .set_tracking(
+                &mut state,
+                SetTrackingInput {
+                    precise_permission: PermissionState::Granted,
+                    background_permission: PermissionState::Granted,
+                    battery_optimization_disabled: true,
+                    enabled: true,
+                },
+                2,
+            )
+            .expect("tracking");
+        let input = |captured_at_ms| ReportLocationInput {
+            latitude: 40.4168,
+            longitude: -3.7038,
+            accuracy_m: 8.0,
+            battery_percent: 80,
+            captured_at_ms: Some(captured_at_ms),
+        };
+
+        assert!(matches!(
+            service.report_location(&mut state, input(0), EVENT_TTL_MS + 1),
+            Err(LumoError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            service.report_location(
+                &mut state,
+                input(1_000 + MAX_LOCATION_FUTURE_SKEW_MS + 1),
+                1_000,
+            ),
+            Err(LumoError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn repeated_location_requests_reuse_the_queued_command() {
+        let service = LumoService;
+        let mut state = RuntimeState::default();
+        service
+            .create_group(&mut state, group_input(), 1)
+            .expect("group");
+
+        let first = service
+            .request_location(&mut state, 2)
+            .expect("first command");
+        let revision = state.revision;
+        let second = service
+            .request_location(&mut state, 3)
+            .expect("same queued command");
+
+        assert_eq!(first, second);
+        assert_eq!(state.commands.len(), 1);
+        assert_eq!(state.revision, revision);
     }
 
     #[test]

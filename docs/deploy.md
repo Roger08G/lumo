@@ -108,6 +108,21 @@ LUMO_API_PASSWORD=el-mismo-secreto-del-servidor
 El nombre de host debe coincidir con el certificado. Después de cambiar estas variables hay que
 recompilar e instalar de nuevo la aplicación; no se leen dinámicamente desde JavaScript.
 
+El wrapper de Tauri deriva `VITE_LUMO_API_ORIGIN` de `LUMO_API_URL` y sólo expone ese origen público
+al frontend para rechazar invitaciones QR creadas para otra API. No definas esa variable a mano ni
+dupliques el secreto en variables `VITE_*`.
+
+## Contrato HTTP v1
+
+- `/health` comprueba que SQLite responde y no requiere autenticación.
+- `/v1/state/compact` es el transporte preferido. Usa base64url, `ETag` y `If-None-Match`.
+- `/v1/state` se conserva como fallback compatible durante la transición.
+- Las escrituras mantienen CAS por revisión. El cliente confirma respuestas ambiguas y reintenta
+  conflictos recargando el estado antes de repetir la operación.
+
+Nginx debe conservar método, ruta y cuerpo sin reescribirlos: esos valores forman parte de la firma
+HMAC. No registres las cabeceras `x-lumo-signature` ni el cuerpo de las peticiones.
+
 ## Operación
 
 Estado y logs:

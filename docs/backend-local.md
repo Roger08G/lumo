@@ -24,6 +24,8 @@ lógica de dominio.
 - Cada petición se firma con HMAC-SHA256, fecha y nonce; el servidor rechaza firmas antiguas y
   repeticiones.
 - El transporte remoto exige HTTPS y el servidor guarda únicamente el sobre cifrado.
+- El cliente reutiliza la conexión HTTPS, negocia el formato compacto, usa `ETag` para evitar
+  descargas sin cambios y reintenta fallos transitorios sin duplicar mutaciones.
 - Los eventos expiran automáticamente después de 24 horas.
 
 La contraseña de API se incorpora al binario Tauri al compilar en modo remoto. Esto sirve para un
@@ -37,8 +39,8 @@ Keystore si la APK se distribuye públicamente.
 3. Indica la URL HTTPS completa en `LUMO_API_URL`.
 4. Genera un secreto aleatorio largo y usa el mismo valor en `LUMO_API_PASSWORD` del cliente y del
    contenedor.
-5. Vuelve a compilar la aplicación. El `build.rs` de Tauri lee el `.env` sin exponer el secreto a
-   Vite ni a JavaScript.
+5. Vuelve a compilar la aplicación. El `build.rs` de Tauri incorpora el secreto a la librería
+   nativa; Vite recibe solamente el origen público HTTPS para validar los QR.
 
 El modo `local` no abre conexiones y sigue siendo el predeterminado.
 
@@ -77,9 +79,13 @@ genera la API y los tres binarios en modo release, y lanza sus pruebas autónoma
 
 ## Límites actuales
 
-- Docker no está instalado en la máquina de desarrollo, así que la imagen y Compose están
-  preparados pero no se han podido ejecutar aquí.
-- El seguimiento en primer plano usa la geolocalización del WebView. El servicio Android de
-  ubicación continua y su notificación persistente todavía requieren el adaptador nativo Kotlin.
+- La API v1 guarda un solo estado cifrado y usa una credencial compartida. Es adecuada para una
+  beta familiar privada, no para una distribución pública ni para alojar varios grupos aislados.
+- Extraer una APK permite recuperar la credencial incorporada. Producción pública requiere
+  identidad y clave no exportable por dispositivo, autorización por rol en el servidor, revocación
+  y almacenamiento separado por grupo.
+- El servicio Android mantiene una cola cifrada y seguimiento en primer plano, pero Doze, un
+  `force-stop` o restricciones agresivas del fabricante pueden retrasar el sondeo. Las pruebas en
+  dispositivos físicos siguen siendo obligatorias.
 - Android siempre permite revocar permisos desde el sistema; ninguna aplicación legítima puede
   impedirlo de forma absoluta.
