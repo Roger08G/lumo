@@ -7,6 +7,12 @@ cargo_script="$script_dir/cargo-lumo.sh"
 
 cd "$project_root"
 
+if rg -n 'LUMO_(API_PASSWORD|SERVER_MASTER_KEY)' \
+    mobile/src-tauri/build.rs mobile/src-tauri/src crates/lumo-runtime/src; then
+    printf 'Server secrets must never be referenced by client source code.\n' >&2
+    exit 1
+fi
+
 windows_shell=false
 case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*) windows_shell=true ;;

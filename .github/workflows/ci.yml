@@ -58,7 +58,14 @@ jobs:
             wget
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Check shell syntax
-        run: bash -n scripts/*.sh
+        run: |
+          bash -n scripts/*.sh
+          ./scripts/deploy.sh --help | grep --fixed-strings -- '--first-v2-cutover'
+          ! grep --extended-regexp -- 'restore_backup_data|find /data .*rm -rf|--remove-orphans|docker compose down' \
+            scripts/deploy.sh
+          rollback_body="$(sed -n '/^rollback_release()/,/^}/p' scripts/deploy.sh)"
+          grep --fixed-strings 'check_public_v2_contract' <<<"$rollback_body" >/dev/null
+          grep --fixed-strings 'without rewinding live data' <<<"$rollback_body" >/dev/null
       - name: Verify Rust workspace
         run: ./scripts/verify-local-backend.sh
 
@@ -68,10 +75,66 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
-      - name: Validate Compose configuration
+      - name: Validate Compose deployment models
         env:
-          LUMO_API_PASSWORD: ci-only-random-secret-with-32-bytes
-        run: docker compose config --quiet
+          LUMO_SERVER_MASTER_KEY: ci-only-random-server-master-key-32-bytes
+          LUMO_ENABLE_LEGACY_V1: "false"
+          LUMO_PROXY_NETWORK: lumo-ci-proxy
+        run: |
+          required=2.24.4
+          actual="$(docker compose version --short)"
+          actual="${actual#v}"
+          actual="${actual%%-*}"
+          test "$(printf '%s\n%s\n' "$required" "$actual" | sort -V | head -n 1)" = "$required"
+
+          base_json="$(docker compose config --format json)"
+          jq -e '
+            .name == "lumo"
+              and .volumes["lumo-data"].name == "lumo_lumo-data"
+          ' <<<"$base_json"
+          jq -e '
+            .services["lumo-api"] as $service
+            | $service.read_only == true
+              and (($service.tmpfs // []) | length > 0)
+              and ((($service.cap_drop // []) | index("ALL")) != null)
+              and ((($service.security_opt // []) | index("no-new-privileges:true")) != null)
+              and $service.pids_limit == 128
+              and (($service.mem_limit | tonumber) == 268435456)
+              and (($service.cpus | tonumber) == 1)
+              and (($service.ports // []) | length == 1)
+              and all($service.ports[]; .host_ip == "127.0.0.1")
+              and (($service.environment.LUMO_ENABLE_LEGACY_V1 | tostring | ascii_downcase) == "false")
+              and $service.logging.options["max-size"] == "10m"
+              and (($service.logging.options["max-file"] | tostring) == "3")
+          ' <<<"$base_json"
+
+          proxy_json="$(
+            docker compose \
+              -f docker-compose.yml \
+              -f docker-compose.proxy.yml \
+              config --format json
+          )"
+          jq -e '
+            .services["lumo-api"] as $service
+            | (($service.ports // []) | length) == 0
+              and (($service.networks // {}) | has("reverse-proxy"))
+              and $service.read_only == true
+              and ((($service.cap_drop // []) | index("ALL")) != null)
+              and ((($service.security_opt // []) | index("no-new-privileges:true")) != null)
+              and $service.pids_limit == 128
+              and (($service.mem_limit | tonumber) == 268435456)
+              and (($service.cpus | tonumber) == 1)
+          ' <<<"$proxy_json"
+
+          custom_identity_json="$(
+            COMPOSE_PROJECT_NAME=lumo-live \
+            LUMO_DATA_VOLUME=lumo-live-data \
+              docker compose config --format json
+          )"
+          jq -e '
+            .name == "lumo-live"
+              and .volumes["lumo-data"].name == "lumo-live-data"
+          ' <<<"$custom_identity_json"
       - name: Build image
         run: docker build --tag lumo-api:ci .
       - name: Create temporary TLS certificate
@@ -88,19 +151,48 @@ jobs:
           sudo chown 10001:0 .ci-certs/privkey.pem
       - name: Start and verify API
         env:
-          LUMO_API_PASSWORD: ci-only-random-secret-with-32-bytes
+          LUMO_SERVER_MASTER_KEY: ci-only-random-server-master-key-32-bytes
+          LUMO_ENABLE_LEGACY_V1: "false"
         run: |
           docker run --detach --name lumo-api-ci \
             --publish 127.0.0.1:8443:8443 \
+            --read-only \
             --tmpfs /data:uid=10001,mode=0700 \
+            --tmpfs /tmp:uid=10001,mode=1777 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --pids-limit 128 \
+            --memory 256m \
+            --cpus 1 \
+            --log-driver json-file \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
             --volume "$PWD/.ci-certs:/certs:ro" \
-            --env LUMO_API_PASSWORD \
+            --env LUMO_SERVER_MASTER_KEY \
+            --env LUMO_ENABLE_LEGACY_V1 \
             lumo-api:ci
 
+          docker inspect lumo-api-ci | jq -e '.[0] |
+            .HostConfig.ReadonlyRootfs == true
+            and .HostConfig.PidsLimit == 128
+            and .HostConfig.Memory == 268435456
+            and .HostConfig.NanoCpus == 1000000000
+            and ((.HostConfig.CapDrop | index("ALL")) != null)
+            and ((.HostConfig.SecurityOpt | index("no-new-privileges:true")) != null)
+          '
+
           for attempt in {1..30}; do
-            if curl --fail --silent --show-error \
+            if health_json="$(curl --fail --silent --show-error \
               --cacert .ci-certs/fullchain.pem \
-              https://localhost:8443/health; then
+              https://localhost:8443/health)" && \
+              jq -e '.status == "ok" and .apiVersion == "v2"' \
+                <<<"$health_json" >/dev/null; then
+              test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+                --cacert .ci-certs/fullchain.pem \
+                https://localhost:8443/v1/state)" = "404"
+              test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+                --cacert .ci-certs/fullchain.pem \
+                https://localhost:8443/v2/groups)" = "405"
               exit 0
             fi
             sleep 2

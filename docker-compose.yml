@@ -1,3 +1,5 @@
+name: ${COMPOSE_PROJECT_NAME:-lumo}
+
 services:
   lumo-api:
     build:
@@ -5,14 +7,33 @@ services:
       dockerfile: Dockerfile
     image: lumo-api:local
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 1
     environment:
       LUMO_API_BIND: 0.0.0.0:8443
       LUMO_API_DATABASE: /data/lumo-api.sqlite3
-      LUMO_API_PASSWORD: ${LUMO_API_PASSWORD:?Define LUMO_API_PASSWORD in .env}
+      LUMO_SERVER_MASTER_KEY: ${LUMO_SERVER_MASTER_KEY:?Define LUMO_SERVER_MASTER_KEY in .env}
+      LUMO_ENABLE_LEGACY_V1: ${LUMO_ENABLE_LEGACY_V1:-false}
+      LUMO_TRUST_PROXY_HEADERS: ${LUMO_TRUST_PROXY_HEADERS:-false}
+      LUMO_MAX_GROUPS: ${LUMO_MAX_GROUPS:-1000}
+      LUMO_MAX_DEVICES_PER_GROUP: ${LUMO_MAX_DEVICES_PER_GROUP:-8}
+      LUMO_MAX_ACTIVE_INVITES_PER_GROUP: ${LUMO_MAX_ACTIVE_INVITES_PER_GROUP:-8}
+      LUMO_BOOTSTRAP_PER_IP: ${LUMO_BOOTSTRAP_PER_IP:-5}
+      LUMO_BOOTSTRAP_GLOBAL: ${LUMO_BOOTSTRAP_GLOBAL:-100}
+      LUMO_BOOTSTRAP_WINDOW_SECONDS: ${LUMO_BOOTSTRAP_WINDOW_SECONDS:-3600}
+      LUMO_INVITE_TTL_SECONDS: ${LUMO_INVITE_TTL_SECONDS:-600}
       LUMO_TLS_CERT_PATH: /certs/fullchain.pem
       LUMO_TLS_KEY_PATH: /certs/privkey.pem
     ports:
-      - "${LUMO_API_PORT:-8443}:8443"
+      - "${LUMO_API_HOST:-127.0.0.1}:${LUMO_API_PORT:-8443}:8443"
     volumes:
       - lumo-data:/data
       - ./certs:/certs:ro
@@ -22,6 +43,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 
 volumes:
   lumo-data:
+    name: ${LUMO_DATA_VOLUME:-lumo_lumo-data}
