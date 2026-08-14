@@ -285,6 +285,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
+
+[[package]]
 name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2267,7 +2273,7 @@ dependencies = [
  "argon2",
  "axum",
  "axum-server",
- "base64 0.22.1",
+ "base64 0.23.1",
  "chacha20poly1305",
  "dotenvy",
  "hkdf",
@@ -2291,7 +2297,7 @@ name = "lumo-core"
 version = "0.1.0"
 dependencies = [
  "argon2",
- "base64 0.22.1",
+ "base64 0.23.1",
  "chacha20poly1305",
  "rand 0.8.7",
  "serde",
@@ -2326,7 +2332,7 @@ dependencies = [
 name = "lumo-protocol"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "hkdf",
  "hmac",
  "lumo-core",
@@ -2344,7 +2350,7 @@ name = "lumo-runtime"
 version = "0.1.0"
 dependencies = [
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "clap",
  "dotenvy",
  "lumo-api",
