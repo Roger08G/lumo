@@ -111,9 +111,8 @@ export function DebugLab() {
     return (
         <main
             css={css({
-                minHeight: "100dvh",
-                padding:
-                    "max(16px, env(safe-area-inset-top)) 16px max(26px, env(safe-area-inset-bottom))",
+                minHeight: "var(--lumo-viewport-height)",
+                padding: "max(16px, var(--lumo-safe-top)) 16px max(26px, var(--lumo-safe-bottom))",
                 background:
                     "linear-gradient(180deg, rgba(251,239,223,.42), transparent 240px), var(--lumo-bg)",
             })}

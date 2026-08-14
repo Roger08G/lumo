@@ -541,6 +541,10 @@ export function LumoProvider({ children }: { children: ReactNode }) {
     const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
     const notifiedEventIds = useRef<Set<string> | null>(null);
     const requestedControllerPermissions = useRef(false);
+    const stateRef = useRef(state);
+    const trackerRecoveryInFlight = useRef(false);
+
+    stateRef.current = state;
 
     useEffect(() => {
         writeStored(localStorage, STORAGE_KEYS.schema, 8);
@@ -598,7 +602,33 @@ export function LumoProvider({ children }: { children: ReactNode }) {
         const synchronize = async () => {
             try {
                 const status = await lumoBackend.getMobileStatus();
-                if (active && status) dispatch({ type: "SYNC_MOBILE_STATUS", payload: status });
+                if (!active || !status) return;
+                dispatch({ type: "SYNC_MOBILE_STATUS", payload: status });
+
+                const current = stateRef.current;
+                const canRecoverTracker =
+                    current.group.active &&
+                    current.mode === "tracker" &&
+                    current.preferences.trackerSetupComplete &&
+                    !status.trackingEnabled &&
+                    status.preciseLocation === "granted" &&
+                    status.backgroundLocation !== "denied" &&
+                    status.notifications === "granted" &&
+                    status.locationServicesEnabled;
+                if (!canRecoverTracker || trackerRecoveryInFlight.current) return;
+
+                trackerRecoveryInFlight.current = true;
+                try {
+                    const result = await lumoBackend.setControlledTracking(true);
+                    if (active && result.status) {
+                        dispatch({ type: "SYNC_MOBILE_STATUS", payload: result.status });
+                    }
+                    if (active && result.snapshot) {
+                        dispatch({ type: "HYDRATE_BACKEND", payload: result.snapshot });
+                    }
+                } finally {
+                    trackerRecoveryInFlight.current = false;
+                }
             } catch {
                 // Android settings can be temporarily unavailable while another activity is open.
             }

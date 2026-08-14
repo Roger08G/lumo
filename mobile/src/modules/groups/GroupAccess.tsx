@@ -36,13 +36,16 @@ interface GroupAccessProps {
 }
 
 interface PreviewInvite {
-    version: 1;
+    version: 1 | 2;
     kind: "lumo-group-invite";
-    name: string;
-    code: string;
+    name?: string;
+    code?: string;
     supervisorName?: string;
     trackedPersonName?: string;
+    invitationId?: string;
     token?: string;
+    expiresAt?: number;
+    apiOrigin?: string;
 }
 
 type GroupAction = "create" | "join" | null;
@@ -55,10 +58,10 @@ function readPreviewInvite(): PreviewInvite {
             localStorage.getItem("lumo.preview-invite") ?? "null",
         ) as PreviewInvite | null;
         if (
-            stored?.version === 1 &&
+            (stored?.version === 1 || stored?.version === 2) &&
             stored.kind === "lumo-group-invite" &&
-            stored.name &&
-            stored.code
+            stored.token &&
+            (!stored.expiresAt || stored.expiresAt > Date.now())
         ) {
             return stored;
         }
@@ -197,8 +200,8 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
         setLoading(true);
         try {
             await onEnter({
-                name: scannedInvite.name,
-                code: scannedInvite.code,
+                name: scannedInvite.name || "Grupo de Lumo",
+                code: scannedInvite.code || "",
                 pin: groupPin,
                 userName: scannedInvite.trackedPersonName || "Miembro",
                 supervisorName: scannedInvite.supervisorName || "Supervisor",
@@ -249,24 +252,27 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
     return (
         <main
             css={css({
-                minHeight: "100dvh",
+                height: "var(--lumo-viewport-height)",
+                minHeight: 0,
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "center",
                 alignItems: "center",
-                padding:
-                    "max(28px, env(safe-area-inset-top)) 24px max(28px, env(safe-area-inset-bottom))",
+                padding: "max(20px, var(--lumo-safe-top)) 24px max(20px, var(--lumo-safe-bottom))",
                 background: "var(--lumo-bg)",
+                overflowY: "auto",
             })}
         >
             <section
                 css={css({
                     width: "100%",
                     maxWidth: 360,
-                    minHeight: "min(660px, calc(100dvh - 56px))",
+                    height: "100%",
+                    minHeight: 0,
                     display: "flex",
                     flexDirection: "column",
                     alignItems: "center",
+                    padding: "2.8rem 0 0 0",
                 })}
             >
                 <div
@@ -274,7 +280,7 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                         display: "grid",
                         justifyItems: "center",
                         gap: 18,
-                        marginTop: "clamp(72px, 18dvh, 148px)",
+                        marginTop: "clamp(52px, 15dvh, 120px)",
                         textAlign: "center",
                         animation: `${enter} .45s ease both`,
                     })}
@@ -289,7 +295,7 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                                 letterSpacing: "-.045em",
                             })}
                         >
-                            lumo
+                            Lumo
                         </h1>
                         <p
                             css={css({
@@ -442,7 +448,8 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                     <div
                         css={css({
                             display: "grid",
-                            gridTemplateColumns: createStep === 0 ? "1fr" : "104px 1fr",
+                            gridTemplateColumns:
+                                createStep === 0 ? "1fr" : "minmax(88px, 104px) minmax(0, 1fr)",
                             gap: 10,
                         })}
                     >
@@ -579,7 +586,9 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                         >
                             <FiCheck size={20} />
                             <div css={css({ display: "grid", gap: 2 })}>
-                                <strong css={css({ fontSize: 13 })}>{scannedInvite?.name}</strong>
+                                <strong css={css({ fontSize: 13 })}>
+                                    {scannedInvite?.name || "Invitación de Lumo"}
+                                </strong>
                                 <span css={css({ fontSize: 10 })}>Código QR válido</span>
                             </div>
                         </div>
@@ -610,7 +619,7 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                         <div
                             css={css({
                                 display: "grid",
-                                gridTemplateColumns: "104px 1fr",
+                                gridTemplateColumns: "minmax(88px, 104px) minmax(0, 1fr)",
                                 gap: 10,
                             })}
                         >

@@ -75,11 +75,10 @@ export function ModeSelection({ onSelect }: ModeSelectionProps) {
     return (
         <main
             css={css({
-                minHeight: "100dvh",
+                minHeight: "var(--lumo-viewport-height)",
                 display: "flex",
                 flexDirection: "column",
-                padding:
-                    "max(26px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom))",
+                padding: "max(26px, var(--lumo-safe-top)) 18px max(24px, var(--lumo-safe-bottom))",
                 background:
                     "radial-gradient(circle at 90% 0, rgba(165,131,225,.2), transparent 30%), var(--lumo-bg)",
             })}
