@@ -8,8 +8,12 @@ use lumo_core::{
     ports::{Clock, StateRepository},
     LumoError, LumoResult, LumoService,
 };
+use lumo_protocol::ControlledOperation;
 
-use crate::simulation::{apply_scenario, seed_demo, SimulationScenario};
+use crate::{
+    simulation::{apply_scenario, seed_demo, SimulationScenario},
+    storage::ControlledOperationPort,
+};
 
 const MAX_REVISION_ATTEMPTS: usize = 4;
 
@@ -30,7 +34,7 @@ impl<R> std::fmt::Debug for LocalBackend<R> {
     }
 }
 
-impl<R: StateRepository + 'static> LocalBackend<R> {
+impl<R: StateRepository + ControlledOperationPort + 'static> LocalBackend<R> {
     pub fn new(repository: R, clock: impl Clock + 'static) -> Self {
         Self {
             repository: Arc::new(repository),
@@ -61,6 +65,11 @@ impl<R: StateRepository + 'static> LocalBackend<R> {
     }
 
     pub fn snapshot(&self, profile: RuntimeProfile) -> LumoResult<AppSnapshot> {
+        if profile == RuntimeProfile::Controlled {
+            if let Some(snapshot) = self.repository.load_controlled_snapshot()? {
+                return Ok(snapshot);
+            }
+        }
         let now_ms = self.clock.now_ms();
         let mut state = self.repository.load()?;
         Ok(self.service.snapshot(&mut state, profile, now_ms))
@@ -129,6 +138,12 @@ impl<R: StateRepository + 'static> LocalBackend<R> {
     }
 
     pub fn set_tracking(&self, input: SetTrackingInput) -> LumoResult<AppSnapshot> {
+        if let Some(response) = self
+            .repository
+            .apply_controlled_operation(ControlledOperation::SetTracking(input.clone()))?
+        {
+            return Ok(response.snapshot);
+        }
         let now_ms = self.clock.now_ms();
         self.transact_with_revision_retry(|state| {
             self.service.set_tracking(state, input.clone(), now_ms)?;
@@ -139,6 +154,12 @@ impl<R: StateRepository + 'static> LocalBackend<R> {
     }
 
     pub fn set_connectivity(&self, connectivity: Connectivity) -> LumoResult<AppSnapshot> {
+        if let Some(response) = self
+            .repository
+            .apply_controlled_operation(ControlledOperation::SetConnectivity { connectivity })?
+        {
+            return Ok(response.snapshot);
+        }
         let now_ms = self.clock.now_ms();
         self.transact_with_revision_retry(|state| {
             self.service.set_connectivity(state, connectivity, now_ms)?;
@@ -149,6 +170,12 @@ impl<R: StateRepository + 'static> LocalBackend<R> {
     }
 
     pub fn report_location(&self, input: ReportLocationInput) -> LumoResult<AppSnapshot> {
+        if let Some(response) = self
+            .repository
+            .apply_controlled_operation(ControlledOperation::ReportLocation(input.clone()))?
+        {
+            return Ok(response.snapshot);
+        }
         let now_ms = self.clock.now_ms();
         self.transact_with_revision_retry(|state| {
             self.service.report_location(state, input.clone(), now_ms)?;
@@ -164,11 +191,27 @@ impl<R: StateRepository + 'static> LocalBackend<R> {
     }
 
     pub fn process_pending(&self) -> LumoResult<usize> {
+        if let Some(response) = self
+            .repository
+            .apply_controlled_operation(ControlledOperation::ProcessPending)?
+        {
+            return response.processed.ok_or_else(|| {
+                LumoError::Serialization(
+                    "member operation response omitted the processed count".to_owned(),
+                )
+            });
+        }
         let now_ms = self.clock.now_ms();
         self.transact_with_revision_retry(|state| self.service.process_pending(state, now_ms))
     }
 
     pub fn send_help(&self) -> LumoResult<AppSnapshot> {
+        if let Some(response) = self
+            .repository
+            .apply_controlled_operation(ControlledOperation::SendHelp)?
+        {
+            return Ok(response.snapshot);
+        }
         let now_ms = self.clock.now_ms();
         self.transact_with_revision_retry(|state| {
             self.service.send_help(state, now_ms)?;

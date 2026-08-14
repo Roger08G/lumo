@@ -54,6 +54,19 @@ internal object LumoQueuePolicy {
     }
 }
 
+internal object LumoQueueCredentialPolicy {
+    fun belongsTo(
+        groupId: String?,
+        deviceId: String?,
+        credential: LumoDeviceCredential,
+    ): Boolean = groupId == credential.groupId && deviceId == credential.deviceId
+}
+
+internal object LumoControlledTrackingPolicy {
+    fun mayAutoRecover(configured: Boolean, explicitlyDisabled: Boolean): Boolean =
+        configured && !explicitlyDisabled
+}
+
 internal enum class LumoRestartAction {
     START,
     SHOW_REOPEN,

@@ -10,7 +10,10 @@ use lumo_core::{
     domain::{Connectivity, EventKind, RuntimeProfile},
 };
 use lumo_runtime::{ConfiguredRepository, LocalBackend, RuntimeConfig, SystemClock};
+use lumo_runtime::{DeviceCredential, DeviceRole, RuntimeMode, StoredDeviceCredential};
 use serde::{Deserialize, Serialize};
+
+use crate::device::DeviceBinding;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +23,7 @@ struct BackgroundTick {
     data_dir: PathBuf,
     battery_percent: u8,
     location: Option<BackgroundLocation>,
+    device_credential: Option<StoredDeviceCredential>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,6 +40,7 @@ struct BackgroundLocation {
 struct BackgroundResponse {
     notifications: Vec<BackgroundNotification>,
     error: Option<String>,
+    error_code: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,16 +61,24 @@ pub extern "system" fn Java_app_lumo_family_mobile_LumoRustBridge_processBackgro
         let payload = environment
             .get_string(&payload)
             .map(|value| value.into())
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| BackgroundFailure::new("invalid_payload", "invalid background payload"))?;
         process_tick(payload)
     }))
-    .unwrap_or_else(|_| Err("background runtime failed safely".to_owned()))
+    .unwrap_or_else(|_| {
+        Err(BackgroundFailure::new(
+            "runtime_error",
+            "background runtime failed safely",
+        ))
+    })
     .unwrap_or_else(|error| {
         serde_json::to_string(&BackgroundResponse {
             notifications: Vec::new(),
-            error: Some(error),
+            error: Some(error.message),
+            error_code: Some(error.code.to_owned()),
         })
-        .unwrap_or_else(|_| "{\"notifications\":[],\"error\":\"serialization failure\"}".to_owned())
+        .unwrap_or_else(|_| {
+            "{\"notifications\":[],\"error\":\"serialization failure\",\"errorCode\":\"runtime_error\"}".to_owned()
+        })
     });
 
     environment
@@ -74,24 +87,68 @@ pub extern "system" fn Java_app_lumo_family_mobile_LumoRustBridge_processBackgro
         .unwrap_or(ptr::null_mut())
 }
 
-fn process_tick(payload: String) -> Result<String, String> {
-    let tick: BackgroundTick = serde_json::from_str(&payload).map_err(|error| error.to_string())?;
+fn process_tick(payload: String) -> Result<String, BackgroundFailure> {
+    let tick: BackgroundTick = serde_json::from_str(&payload)
+        .map_err(|_| BackgroundFailure::new("invalid_payload", "invalid background payload"))?;
     let profile = match tick.role.as_str() {
         "controlled" => RuntimeProfile::Controlled,
         "controller" => RuntimeProfile::Controller,
-        _ => return Err("unsupported background role".to_owned()),
+        _ => {
+            return Err(BackgroundFailure::new(
+                "credential_invalid",
+                "unsupported background role",
+            ))
+        }
     };
     if !tick.data_dir.is_absolute() {
-        return Err("background data directory must be absolute".to_owned());
+        return Err(BackgroundFailure::new(
+            "credential_invalid",
+            "background data directory must be absolute",
+        ));
     }
-    let config = RuntimeConfig::from_values(
+    let config = RuntimeConfig::from_mobile_values(
         option_env!("LUMO_RUNTIME_MODE"),
         Some(tick.data_dir.join("runtime")),
         option_env!("LUMO_API_URL"),
-        option_env!("LUMO_API_PASSWORD"),
+        !cfg!(debug_assertions),
     )
-    .map_err(|error| error.to_string())?;
-    let repository = ConfiguredRepository::open(&config).map_err(|error| error.to_string())?;
+    .map_err(|_| BackgroundFailure::new("credential_invalid", "invalid runtime configuration"))?;
+    let repository = ConfiguredRepository::open(&config).map_err(background_runtime_error)?;
+    if config.mode == RuntimeMode::Remote {
+        let expected_origin = config
+            .api_url
+            .as_deref()
+            .ok_or_else(|| BackgroundFailure::new("credential_invalid", "missing API origin"))?;
+        let stored = tick.device_credential.as_ref().ok_or_else(|| {
+            BackgroundFailure::new("credential_invalid", "missing device credential")
+        })?;
+        let credential =
+            DeviceCredential::from_stored(stored, expected_origin, false).map_err(|_| {
+                BackgroundFailure::new("credential_invalid", "invalid device credential")
+            })?;
+        let expected_role = match profile {
+            RuntimeProfile::Controller => DeviceRole::Controller,
+            RuntimeProfile::Controlled => DeviceRole::Controlled,
+            RuntimeProfile::Debug => unreachable!(),
+        };
+        if credential.role() != expected_role {
+            return Err(BackgroundFailure::new(
+                "credential_invalid",
+                "device credential role mismatch",
+            ));
+        }
+        let binding = DeviceBinding::open(config.data_dir.join("device-binding.json"))
+            .map_err(|_| BackgroundFailure::new("credential_invalid", "invalid device binding"))?;
+        if binding.require_bound().ok() != Some(profile) {
+            return Err(BackgroundFailure::new(
+                "credential_invalid",
+                "device binding role mismatch",
+            ));
+        }
+        repository.install_credential(credential).map_err(|_| {
+            BackgroundFailure::new("credential_invalid", "invalid device credential")
+        })?;
+    }
     let backend = LocalBackend::new(repository, SystemClock);
 
     let mut snapshot = if profile == RuntimeProfile::Controlled {
@@ -104,16 +161,23 @@ fn process_tick(payload: String) -> Result<String, String> {
                     battery_percent: tick.battery_percent,
                     captured_at_ms: Some(location.timestamp_ms),
                 })
-                .map_err(|error| error.to_string())?
+                .map_err(background_runtime_error)?
         } else {
-            backend
+            let snapshot = backend
                 .snapshot(profile)
-                .map_err(|error| error.to_string())?
+                .map_err(background_runtime_error)?;
+            if snapshot.controlled.tracking_enabled {
+                backend
+                    .set_connectivity(Connectivity::Online)
+                    .map_err(background_runtime_error)?
+            } else {
+                snapshot
+            }
         }
     } else {
         backend
             .snapshot(profile)
-            .map_err(|error| error.to_string())?
+            .map_err(background_runtime_error)?
     };
 
     if profile == RuntimeProfile::Controller
@@ -125,7 +189,7 @@ fn process_tick(payload: String) -> Result<String, String> {
     {
         snapshot = backend
             .set_connectivity(Connectivity::Offline)
-            .map_err(|error| error.to_string())?;
+            .map_err(background_runtime_error)?;
     }
 
     let notifications = if profile == RuntimeProfile::Controller {
@@ -156,8 +220,38 @@ fn process_tick(payload: String) -> Result<String, String> {
     serde_json::to_string(&BackgroundResponse {
         notifications,
         error: None,
+        error_code: None,
     })
-    .map_err(|error| error.to_string())
+    .map_err(|_| BackgroundFailure::new("runtime_error", "response serialization failed"))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct BackgroundFailure {
+    code: &'static str,
+    message: String,
+}
+
+impl BackgroundFailure {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+fn background_runtime_error(error: lumo_core::LumoError) -> BackgroundFailure {
+    let code = match error {
+        lumo_core::LumoError::AuthenticationFailed => "credential_revoked",
+        lumo_core::LumoError::TrackingDisabled => "tracking_disabled",
+        lumo_core::LumoError::Unauthorized => "authorization_failed",
+        lumo_core::LumoError::RemoteUnavailable
+        | lumo_core::LumoError::RevisionConflict
+        | lumo_core::LumoError::RateLimited
+        | lumo_core::LumoError::NotFound(_) => "transient_remote",
+        _ => "runtime_error",
+    };
+    BackgroundFailure::new(code, "background synchronization failed")
 }
 
 #[cfg(test)]
@@ -182,8 +276,8 @@ mod tests {
         })
         .to_string();
         assert_eq!(
-            process_tick(payload),
-            Err("unsupported background role".to_owned())
+            process_tick(payload).expect_err("unknown role").code,
+            "credential_invalid"
         );
     }
 
@@ -198,8 +292,28 @@ mod tests {
         })
         .to_string();
         assert_eq!(
-            process_tick(payload),
-            Err("background data directory must be absolute".to_owned())
+            process_tick(payload).expect_err("relative path").code,
+            "credential_invalid"
+        );
+    }
+
+    #[test]
+    fn remote_failures_only_classify_auth_as_terminal() {
+        assert_eq!(
+            background_runtime_error(lumo_core::LumoError::AuthenticationFailed).code,
+            "credential_revoked"
+        );
+        assert_eq!(
+            background_runtime_error(lumo_core::LumoError::RemoteUnavailable).code,
+            "transient_remote"
+        );
+        assert_eq!(
+            background_runtime_error(lumo_core::LumoError::TrackingDisabled).code,
+            "tracking_disabled"
+        );
+        assert_eq!(
+            background_runtime_error(lumo_core::LumoError::Unauthorized).code,
+            "authorization_failed"
         );
     }
 }

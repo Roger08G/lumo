@@ -88,6 +88,7 @@ export type MobileRole = "controller" | "controlled";
 export interface MobileRuntimeStatus {
     platform: "android";
     trackingEnabled: boolean;
+    controlledTrackingMayAutoRecover: boolean;
     role: MobileRole | null;
     preciseLocation: "granted" | "denied";
     backgroundLocation: "granted" | "denied" | "notRequired";
@@ -95,6 +96,8 @@ export interface MobileRuntimeStatus {
     batteryOptimizationDisabled: boolean;
     batteryPercent: number;
     locationServicesEnabled: boolean;
+    controllerNotificationsConfigured: boolean;
+    controllerNotificationsEnabled: boolean;
 }
 
 export interface LumoState {
@@ -118,6 +121,7 @@ export interface GroupEntryPayload {
     trackedPersonPhone: string;
     role: GroupRole;
     entry: "created" | "joined";
+    invitationId?: string;
     inviteToken?: string;
 }
 

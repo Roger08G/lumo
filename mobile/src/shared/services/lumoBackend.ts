@@ -395,8 +395,9 @@ export const lumoBackend = {
         return snapshot ? hydrate(snapshot) : null;
     },
 
-    async joinGroup(token: string, pin: string) {
+    async joinGroup(invitationId: string, token: string, pin: string) {
         const verified = await nativeInvoke<{ verified: boolean }>("group_consume_invitation", {
+            invitationId,
             token,
             pin,
         });
@@ -414,12 +415,10 @@ export const lumoBackend = {
     },
 
     async leaveGroup(pin: string) {
-        if (isMobileNative()) {
-            const status = await this.getMobileStatus();
-            if (status?.trackingEnabled && status.role) {
-                await this.configureMobileTracking(status.role, false);
-            }
-        }
+        // Rust confirms the protected remote leave first and then clears the
+        // native credential, queue and tracking service atomically. Stopping
+        // Android here would leave a still-paired device untracked whenever
+        // the PIN is rejected or the API is temporarily unavailable.
         await nativeInvoke("group_leave", { pin });
     },
 
@@ -591,6 +590,9 @@ export const lumoBackend = {
     },
 
     async applyDebugScenario(scenario: DebugScenario) {
+        // Debug remains a local UI sandbox in remote builds. Never let a demo
+        // scenario mutate the real family group or reuse production credentials.
+        if (configuredApiOrigin !== null) return null;
         const snapshot = await nativeInvoke<BackendSnapshot>("debug_apply_scenario", { scenario });
         return snapshot ? hydrate(snapshot) : null;
     },

@@ -164,6 +164,15 @@ function createInitialState(): LumoState {
     localStorage.removeItem("lumo.session");
     sessionStorage.removeItem("lumo.session");
 
+    // Native builds hydrate authoritative data from Rust. Keeping group,
+    // location or event snapshots in WebView storage would duplicate sensitive
+    // family data outside the protected backend store.
+    if (lumoBackend.isNative()) {
+        Object.values(STORAGE_KEYS).forEach((key) => localStorage.removeItem(key));
+        localStorage.removeItem("lumo.preview-invite");
+        return fallback;
+    }
+
     const storedSchema = readStored<number>(localStorage, STORAGE_KEYS.schema, 0);
     if (storedSchema < 8) {
         Object.values(STORAGE_KEYS).forEach((key) => localStorage.removeItem(key));
@@ -378,7 +387,12 @@ function applyScenario(state: LumoState, scenario: DebugScenario): LumoState {
 function reducer(state: LumoState, action: LumoAction): LumoState {
     switch (action.type) {
         case "ENTER_GROUP": {
-            const { pin: _pin, inviteToken: _inviteToken, ...group } = action.payload;
+            const {
+                pin: _pin,
+                invitationId: _invitationId,
+                inviteToken: _inviteToken,
+                ...group
+            } = action.payload;
             return {
                 ...state,
                 group: { active: true, ...group },
@@ -476,7 +490,12 @@ function reducer(state: LumoState, action: LumoAction): LumoState {
                               batteryProtection: action.payload.batteryOptimizationDisabled,
                           },
                       }
-                    : state.preferences,
+                    : action.payload.controllerNotificationsConfigured
+                      ? {
+                            ...state.preferences,
+                            notifications: action.payload.controllerNotificationsEnabled,
+                        }
+                      : state.preferences,
                 mobile: action.payload,
             };
         }
@@ -547,6 +566,7 @@ export function LumoProvider({ children }: { children: ReactNode }) {
     stateRef.current = state;
 
     useEffect(() => {
+        if (lumoBackend.isNative()) return;
         writeStored(localStorage, STORAGE_KEYS.schema, 8);
         writeStored(localStorage, STORAGE_KEYS.mode, state.mode);
         writeStored(localStorage, STORAGE_KEYS.demo, state.demo);
@@ -556,6 +576,7 @@ export function LumoProvider({ children }: { children: ReactNode }) {
     }, [state.mode, state.demo, state.places, state.events, state.preferences]);
 
     useEffect(() => {
+        if (lumoBackend.isNative()) return;
         if (!state.group.active) {
             localStorage.removeItem(STORAGE_KEYS.group);
             return;
@@ -611,6 +632,7 @@ export function LumoProvider({ children }: { children: ReactNode }) {
                     current.mode === "tracker" &&
                     current.preferences.trackerSetupComplete &&
                     !status.trackingEnabled &&
+                    status.controlledTrackingMayAutoRecover &&
                     status.preciseLocation === "granted" &&
                     status.backgroundLocation !== "denied" &&
                     status.notifications === "granted" &&
@@ -656,21 +678,21 @@ export function LumoProvider({ children }: { children: ReactNode }) {
             !state.group.active ||
             state.mode !== "controller" ||
             !lumoBackend.isMobileNative() ||
+            state.mobile === null ||
             requestedControllerPermissions.current
         ) {
             return;
         }
         requestedControllerPermissions.current = true;
+        if (!state.preferences.notifications) return;
         void lumoBackend
             .requestMobilePermissions("controller")
-            .then(async (permissionStatus) => {
-                const status = state.preferences.notifications
-                    ? await lumoBackend.configureMobileTracking("controller", true)
-                    : permissionStatus;
+            .then(async () => {
+                const status = await lumoBackend.configureMobileTracking("controller", true);
                 if (status) dispatch({ type: "SYNC_MOBILE_STATUS", payload: status });
             })
             .catch(() => undefined);
-    }, [state.group.active, state.mode, state.preferences.notifications]);
+    }, [state.group.active, state.mobile, state.mode, state.preferences.notifications]);
 
     useEffect(() => {
         if (
