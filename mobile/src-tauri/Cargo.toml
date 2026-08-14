@@ -22,7 +22,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
 lumo-core = { path = "../../crates/lumo-core" }
 lumo-runtime = { path = "../../crates/lumo-runtime" }
 tauri-plugin-lumo-mobile = { path = "../../plugins/tauri-plugin-lumo-mobile" }
