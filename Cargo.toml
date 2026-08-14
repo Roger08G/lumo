@@ -24,7 +24,7 @@ chacha20poly1305 = "0.10.1"
 clap = { version = "4.5.48", features = ["derive", "env"] }
 dotenvy = "0.15.7"
 hmac = "0.12.1"
-hkdf = "0.12.4"
+hkdf = "0.13.0"
 rand = "0.8.5"
 reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
