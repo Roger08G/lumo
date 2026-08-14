@@ -166,6 +166,23 @@ fn write_private(path: &Path, bytes: &[u8]) -> LumoResult<()> {
     file.sync_all().map_err(storage_error)
 }
 
+#[cfg(target_os = "android")]
+fn replace_file(temporary: &Path, destination: &Path) -> LumoResult<()> {
+    // Android app sandboxes are private, but some OEM filesystems/SELinux policies reject hard
+    // links with EACCES. The lifecycle mutex guarantees that only this process can install an
+    // onboarding marker, so a same-directory rename stays atomic without hard-link support.
+    if destination.exists() {
+        let _ = fs::remove_file(temporary);
+        return Err(pending_conflict());
+    }
+    if let Err(error) = fs::rename(temporary, destination) {
+        let _ = fs::remove_file(temporary);
+        return Err(storage_error(error));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
 fn replace_file(temporary: &Path, destination: &Path) -> LumoResult<()> {
     if let Err(error) = fs::hard_link(temporary, destination) {
         let _ = fs::remove_file(temporary);

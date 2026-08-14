@@ -151,7 +151,10 @@ fn write_binding_atomically(path: &Path, bytes: &[u8]) -> LumoResult<()> {
         let _ = fs::remove_file(&temporary);
         return Err(storage_error(error));
     }
-    #[cfg(unix)]
+    // A file fsync already makes the binding contents durable. Opening/fsyncing an app-private
+    // directory is denied by some Android OEM kernels, so keep the extra directory durability
+    // barrier on other Unix targets only.
+    #[cfg(all(unix, not(target_os = "android")))]
     {
         fs::File::open(parent)
             .and_then(|directory| directory.sync_all())
