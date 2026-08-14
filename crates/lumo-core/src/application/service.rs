@@ -386,13 +386,17 @@ impl LumoService {
             || state.controlled.precise_permission != PermissionState::Granted
             || state.controlled.background_permission != PermissionState::Granted
         {
-            return Err(LumoError::Unauthorized);
+            return Err(LumoError::TrackingDisabled);
         }
 
         let captured_at_ms = input.captured_at_ms.unwrap_or(now_ms);
-        if captured_at_ms < now_ms.saturating_sub(EVENT_TTL_MS)
-            || captured_at_ms > now_ms.saturating_add(MAX_LOCATION_FUTURE_SKEW_MS)
-        {
+        // An offline queue can cross the 24-hour retention boundary between
+        // reading and uploading a sample. Treat that sample as acknowledged
+        // and obsolete so it cannot block every newer queued location.
+        if captured_at_ms < now_ms.saturating_sub(EVENT_TTL_MS) {
+            return Ok(());
+        }
+        if captured_at_ms > now_ms.saturating_add(MAX_LOCATION_FUTURE_SKEW_MS) {
             return Err(LumoError::InvalidInput(
                 "location timestamp is outside the accepted window".to_owned(),
             ));
@@ -782,6 +786,43 @@ mod tests {
     }
 
     #[test]
+    fn controlled_member_snapshot_is_least_privilege() {
+        let service = LumoService;
+        let mut state = RuntimeState::default();
+        service
+            .create_group(&mut state, group_input(), 1)
+            .expect("group");
+        service
+            .create_place(&mut state, place_input("Casa", 40.0, -3.0), 2)
+            .expect("place");
+        service
+            .request_location(&mut state, 3)
+            .expect("pending command");
+        service
+            .create_invitation(&mut state, "123456", 4)
+            .expect("invitation");
+
+        let snapshot = state.member_snapshot();
+        assert_eq!(snapshot.profile, RuntimeProfile::Controlled);
+        assert!(snapshot.session.is_some());
+        assert!(snapshot.places.is_empty());
+        assert!(snapshot.events.is_empty());
+        assert!(snapshot.commands.is_empty());
+
+        let json = serde_json::to_string(&snapshot).expect("json");
+        for private_field in [
+            "pinHash",
+            "pinGuard",
+            "invitations",
+            "nextSequence",
+            "123456",
+            "argon2",
+        ] {
+            assert!(!json.contains(private_field), "leaked {private_field}");
+        }
+    }
+
+    #[test]
     fn protected_actions_lock_after_repeated_failures() {
         let service = LumoService;
         let mut state = RuntimeState::default();
@@ -1006,10 +1047,11 @@ mod tests {
             captured_at_ms: Some(captured_at_ms),
         };
 
-        assert!(matches!(
-            service.report_location(&mut state, input(0), EVENT_TTL_MS + 1),
-            Err(LumoError::InvalidInput(_))
-        ));
+        let revision = state.revision;
+        service
+            .report_location(&mut state, input(0), EVENT_TTL_MS + 1)
+            .expect("expired offline sample is ignored");
+        assert_eq!(state.revision, revision);
         assert!(matches!(
             service.report_location(
                 &mut state,

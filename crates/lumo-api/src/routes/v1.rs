@@ -157,13 +157,13 @@ async fn store_state(store: ApiStore, request: PutStateRequest, version: &str) -
     }
 }
 
-fn invalid_body(error: serde_json::Error) -> Response {
+pub(crate) fn invalid_body(error: serde_json::Error) -> Response {
     api_error(LumoError::InvalidInput(format!(
         "invalid request body: {error}"
     )))
 }
 
-fn revision_conflict() -> Response {
+pub(crate) fn revision_conflict() -> Response {
     (
         StatusCode::CONFLICT,
         Json(ApiErrorBody {
@@ -200,14 +200,20 @@ fn with_etag(mut response: Response, etag: &str) -> Response {
     response
 }
 
-fn api_error(error: LumoError) -> Response {
+pub(crate) fn api_error(error: LumoError) -> Response {
     let (status, code) = match &error {
         LumoError::AuthenticationFailed => (StatusCode::UNAUTHORIZED, "authentication_failed"),
         LumoError::ExpiredMessage => (StatusCode::UNAUTHORIZED, "clock_skew"),
         LumoError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
         LumoError::ReplayDetected => (StatusCode::CONFLICT, "replay_detected"),
         LumoError::RevisionConflict => (StatusCode::CONFLICT, "revision_conflict"),
+        LumoError::Unauthorized => (StatusCode::FORBIDDEN, "unauthorized"),
+        LumoError::TrackingDisabled => (StatusCode::FORBIDDEN, "tracking_disabled"),
         LumoError::InvalidInput(_) => (StatusCode::BAD_REQUEST, "invalid_input"),
+        LumoError::InvalidInvitation => (StatusCode::BAD_REQUEST, "invalid_invitation"),
+        LumoError::NotFound(_) | LumoError::GroupNotInitialized => {
+            (StatusCode::NOT_FOUND, "not_found")
+        }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
     };
     let message = if status == StatusCode::INTERNAL_SERVER_ERROR {

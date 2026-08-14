@@ -9,6 +9,15 @@ use lumo_core::{LumoError, LumoResult};
 use lumo_protocol::RemoteStateRecord;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
+use crate::crypto::MasterKey;
+
+mod v2;
+
+pub use v2::{
+    AuthenticatedDevice, ConsumeInvitation, ConsumedInvitation, Idempotent, MemberOperationResult,
+    MemberSnapshotResult, NewDevice, NewGroup, NewInvitation,
+};
+
 #[derive(Clone)]
 pub struct ApiStore {
     connection: Arc<Mutex<Connection>>,
@@ -21,7 +30,7 @@ impl std::fmt::Debug for ApiStore {
 }
 
 impl ApiStore {
-    pub fn open(path: impl AsRef<Path>) -> LumoResult<Self> {
+    pub fn open(path: impl AsRef<Path>, master: &MasterKey) -> LumoResult<Self> {
         let path = path.as_ref();
         if let Some(parent) = path
             .parent()
@@ -36,7 +45,8 @@ impl ApiStore {
         connection.set_prepared_statement_cache_capacity(16);
         connection
             .execute_batch(
-                "PRAGMA journal_mode = WAL;
+                "PRAGMA foreign_keys = ON;
+                 PRAGMA journal_mode = WAL;
                  PRAGMA synchronous = NORMAL;
                  PRAGMA journal_size_limit = 16777216;
                  PRAGMA wal_autocheckpoint = 256;
@@ -48,6 +58,8 @@ impl ApiStore {
                  );",
             )
             .map_err(storage_error)?;
+        v2::migrate(&connection)?;
+        v2::verify_or_initialize_master(&connection, master)?;
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
         })

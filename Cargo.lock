@@ -2264,13 +2264,21 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 name = "lumo-api"
 version = "0.1.0"
 dependencies = [
+ "argon2",
  "axum",
  "axum-server",
+ "base64 0.22.1",
+ "chacha20poly1305",
  "dotenvy",
+ "hkdf",
+ "hmac",
  "lumo-core",
  "lumo-protocol",
+ "rand 0.8.7",
  "rusqlite",
+ "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "tower",
@@ -2301,6 +2309,7 @@ dependencies = [
  "dotenvy",
  "jni",
  "lumo-core",
+ "lumo-protocol",
  "lumo-runtime",
  "serde",
  "serde_json",
@@ -2310,6 +2319,7 @@ dependencies = [
  "tauri-plugin-geolocation",
  "tauri-plugin-lumo-mobile",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]
@@ -4123,9 +4133,11 @@ name = "tauri-plugin-lumo-mobile"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.20",
+ "zeroize",
 ]
 
 [[package]]
