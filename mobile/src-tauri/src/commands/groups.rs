@@ -46,6 +46,7 @@ pub async fn group_verify_pin(
     pin: String,
 ) -> CommandResult<VerifiedView> {
     let backend = state.0.clone();
+    state.1.require_bound()?;
     run_blocking(move || {
         backend.verify_pin(&pin)?;
         Ok(VerifiedView { verified: true })
@@ -59,6 +60,7 @@ pub async fn group_create_invitation(
     pin: String,
 ) -> CommandResult<InvitationView> {
     let backend = state.0.clone();
+    state.1.require_controller()?;
     run_blocking(move || backend.create_invitation(&pin).map_err(Into::into)).await
 }
 
@@ -92,6 +94,7 @@ pub async fn group_leave(
     let backend = state.0.clone();
     let binding = state.1.clone();
     let mode = state.2;
+    binding.require_bound()?;
     run_blocking(move || {
         if mode == lumo_runtime::RuntimeMode::Local {
             backend.leave_group(&pin)?;

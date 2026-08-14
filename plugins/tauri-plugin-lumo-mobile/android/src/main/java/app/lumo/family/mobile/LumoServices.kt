@@ -12,6 +12,7 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import java.util.concurrent.Executors
@@ -60,7 +61,7 @@ internal abstract class LumoForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         if (!prerequisitesMet()) {
-            disableAndStop()
+            stopForUnavailablePrerequisites()
             return
         }
         runCatching {
@@ -73,7 +74,7 @@ internal abstract class LumoForegroundService : Service() {
         }.onSuccess {
             foregroundStarted = true
         }.onFailure {
-            disableAndStop()
+            stopForUnavailablePrerequisites()
         }
     }
 
@@ -106,7 +107,7 @@ internal abstract class LumoForegroundService : Service() {
 
     protected fun runTick() {
         if (!prerequisitesMet()) {
-            disableAndStop()
+            stopForUnavailablePrerequisites()
             return
         }
         LumoTickProcessor.process(applicationContext, role, sampleLocation())
@@ -115,13 +116,9 @@ internal abstract class LumoForegroundService : Service() {
     protected open fun prerequisitesMet(): Boolean =
         LumoDeviceStatus.notificationsGranted(applicationContext)
 
-    protected fun disableAndStop() {
-        LumoPreferences.setTracking(
-            this,
-            enabled = false,
-            role = null,
-            intervalSeconds = LumoPreferences.intervalSeconds(this),
-        )
+    private fun stopForUnavailablePrerequisites() {
+        // Keep the user's explicit enabled preference. Android/OEM restrictions and temporarily
+        // disabled services can otherwise turn a recoverable interruption into a permanent one.
         stopSelf()
     }
 
@@ -138,10 +135,6 @@ internal abstract class LumoForegroundService : Service() {
 }
 
 internal class LumoLocationService : LumoForegroundService(), LocationListener {
-    private companion object {
-        const val MAX_LOCATION_AGE_MS = 2 * 60 * 1000L
-    }
-
     override val role = LumoServiceController.ROLE_CONTROLLED
     override val notificationId = LumoNotifications.LOCATION_FOREGROUND_ID
     override val lumoForegroundServiceType: Int
@@ -170,15 +163,13 @@ internal class LumoLocationService : LumoForegroundService(), LocationListener {
     }
 
     override fun onLocationChanged(location: Location) {
-        if (latestLocation == null || location.time >= (latestLocation?.time ?: 0L)) {
+        if (!isFresh(location)) return
+        if (latestLocation?.let { current -> isNewer(location, current) } != false) {
             latestLocation = location
         }
     }
 
-    override fun sampleLocation(): Location? =
-        latestLocation?.takeIf { location ->
-            location.time > 0L && System.currentTimeMillis() - location.time in 0..MAX_LOCATION_AGE_MS
-        }
+    override fun sampleLocation(): Location? = latestLocation?.takeIf(::isFresh)
 
     override fun prerequisitesMet(): Boolean =
         super.prerequisitesMet() &&
@@ -209,6 +200,32 @@ internal class LumoLocationService : LumoForegroundService(), LocationListener {
             }
         }
     }
+
+    private fun isFresh(location: Location): Boolean {
+        val maxAgeMs = LumoLocationPolicy.maxAgeMs(LumoPreferences.intervalSeconds(this))
+        val elapsedRealtimeNanos = location.elapsedRealtimeNanos
+        val nowElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+        if (elapsedRealtimeNanos > 0L && elapsedRealtimeNanos <= nowElapsedRealtimeNanos) {
+            val ageMs =
+                TimeUnit.NANOSECONDS.toMillis(nowElapsedRealtimeNanos - elapsedRealtimeNanos)
+            return ageMs <= maxAgeMs
+        }
+        return LumoLocationPolicy.isFresh(
+            sourceTimestampMs = location.time,
+            nowMs = System.currentTimeMillis(),
+            intervalSeconds = LumoPreferences.intervalSeconds(this),
+        )
+    }
+
+    private fun isNewer(candidate: Location, current: Location): Boolean {
+        val candidateElapsed = candidate.elapsedRealtimeNanos
+        val currentElapsed = current.elapsedRealtimeNanos
+        return if (candidateElapsed > 0L && currentElapsed > 0L) {
+            candidateElapsed >= currentElapsed
+        } else {
+            candidate.time >= current.time
+        }
+    }
 }
 
 internal class LumoControllerService : LumoForegroundService() {
@@ -217,9 +234,7 @@ internal class LumoControllerService : LumoForegroundService() {
     override val lumoForegroundServiceType: Int
         get() =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
             } else {
                 0
             }

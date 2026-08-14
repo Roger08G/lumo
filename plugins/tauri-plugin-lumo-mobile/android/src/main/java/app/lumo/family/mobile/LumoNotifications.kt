@@ -12,6 +12,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 
 internal object LumoNotifications {
     const val LOCATION_FOREGROUND_ID = 4101
@@ -135,9 +136,11 @@ internal object LumoNotifications {
                 (value as? Long)?.takeIf { now - it <= RETENTION_MS }?.let { key to it }
             }.toMap()
         if (retained.containsKey(id)) return false
-        val editor = preferences.edit().clear()
-        retained.entries.toList().takeLast(199).forEach { editor.putLong(it.key, it.value) }
-        editor.putLong(id, now).commit()
+        preferences.edit(commit = true) {
+            clear()
+            retained.entries.toList().takeLast(199).forEach { putLong(it.key, it.value) }
+            putLong(id, now)
+        }
         return true
     }
 }

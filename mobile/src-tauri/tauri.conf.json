@@ -1,6 +1,6 @@
 {
     "$schema": "https://schema.tauri.app/config/2",
-    "productName": "lumo",
+    "productName": "Lumo",
     "version": "0.1.0",
     "identifier": "app.lumo.family",
     "build": {
@@ -12,13 +12,23 @@
     "app": {
         "windows": [
             {
-                "title": "lumo",
+                "title": "Lumo",
                 "width": 360,
                 "height": 800
             }
         ],
         "security": {
-            "csp": null
+            "csp": {
+                "default-src": "'self' customprotocol: asset:",
+                "connect-src": "ipc: http://ipc.localhost",
+                "font-src": "'self' data:",
+                "img-src": "'self' asset: http://asset.localhost blob: data:",
+                "style-src": "'self' 'unsafe-inline'",
+                "object-src": "'none'",
+                "base-uri": "'none'",
+                "frame-ancestors": "'none'"
+            },
+            "devCsp": "default-src 'self' customprotocol: asset:; connect-src ipc: http://ipc.localhost ws://localhost:* ws://127.0.0.1:*; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
         }
     },
     "bundle": {

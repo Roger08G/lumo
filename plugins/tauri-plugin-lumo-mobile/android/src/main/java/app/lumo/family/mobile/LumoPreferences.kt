@@ -1,6 +1,7 @@
 package app.lumo.family.mobile
 
 import android.content.Context
+import androidx.core.content.edit
 
 internal object LumoPreferences {
     private const val FILE_NAME = "lumo_mobile_runtime"
@@ -25,17 +26,16 @@ internal object LumoPreferences {
             )
 
     fun setTracking(context: Context, enabled: Boolean, role: String?, intervalSeconds: Long) {
-        preferences(context)
-            .edit()
-            .putBoolean(KEY_ENABLED, enabled)
-            .putString(KEY_ROLE, if (enabled) role else null)
-            .putLong(
+        preferences(context).edit(commit = true) {
+            putBoolean(KEY_ENABLED, enabled)
+            putString(KEY_ROLE, if (enabled) role else null)
+            putLong(
                 KEY_INTERVAL,
                 intervalSeconds.coerceIn(
                     LumoServiceController.MIN_INTERVAL_SECONDS,
                     LumoServiceController.MAX_INTERVAL_SECONDS,
                 ),
             )
-            .commit()
+        }
     }
 }

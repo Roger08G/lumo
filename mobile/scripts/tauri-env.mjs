@@ -1,8 +1,90 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import {
+    appendFileSync,
+    cpSync,
+    existsSync,
+    readFileSync,
+    readdirSync,
+    writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 
 const env = { ...process.env };
+
+function exposePublicApiOrigin() {
+    const envPath = resolve("../.env");
+    if (!existsSync(envPath)) return;
+    const match = readFileSync(envPath, "utf8").match(/^LUMO_API_URL\s*=\s*(.+?)\s*$/m);
+    if (!match) return;
+    const value = match[1].replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, "$1$2").trim();
+    try {
+        const url = new URL(value);
+        if (url.protocol === "https:" && url.username === "" && url.password === "") {
+            env.VITE_LUMO_API_ORIGIN = url.origin;
+        }
+    } catch {
+        // Rust configuration reports the authoritative error without exposing other .env values.
+    }
+}
+
+exposePublicApiOrigin();
+
+function syncAndroidProject() {
+    const tauriConfigPath = resolve("src-tauri/tauri.conf.json");
+    const stringsPath = resolve("src-tauri/gen/android/app/src/main/res/values/strings.xml");
+    if (existsSync(tauriConfigPath) && existsSync(stringsPath)) {
+        const { productName = "Lumo" } = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
+        const escapedProductName = String(productName)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&apos;");
+        const originalStrings = readFileSync(stringsPath, "utf8");
+        const strings = originalStrings
+            .replace(
+                /(<string name="app_name">)[\s\S]*?(<\/string>)/,
+                `$1"${escapedProductName}"$2`,
+            )
+            .replace(
+                /(<string name="main_activity_title">)[\s\S]*?(<\/string>)/,
+                `$1"${escapedProductName}"$2`,
+            );
+        if (strings !== originalStrings) writeFileSync(stringsPath, strings, "utf8");
+    }
+
+    const iconSource = resolve("src-tauri/icons/android");
+    const resourceTarget = resolve("src-tauri/gen/android/app/src/main/res");
+    if (existsSync(iconSource) && existsSync(resourceTarget)) {
+        for (const entry of readdirSync(iconSource, { withFileTypes: true })) {
+            cpSync(resolve(iconSource, entry.name), resolve(resourceTarget, entry.name), {
+                recursive: true,
+                force: true,
+            });
+        }
+    }
+
+    const manifestPath = resolve("src-tauri/gen/android/app/src/main/AndroidManifest.xml");
+    if (!existsSync(manifestPath)) return;
+
+    const originalManifest = readFileSync(manifestPath, "utf8");
+    let manifest = originalManifest;
+    if (!/android:roundIcon=/.test(manifest)) {
+        manifest = manifest.replace(
+            /(<application\s+android:icon="@mipmap\/ic_launcher")/,
+            '$1\n        android:roundIcon="@mipmap/ic_launcher_round"',
+        );
+    }
+    if (!/android:windowSoftInputMode=/.test(manifest)) {
+        manifest = manifest.replace(
+            /(<activity\s+android:configChanges="[^"]+")/,
+            '$1\n            android:windowSoftInputMode="adjustResize"',
+        );
+    }
+    if (manifest !== originalManifest) writeFileSync(manifestPath, manifest, "utf8");
+}
+
+syncAndroidProject();
 
 if (process.platform === "win32") {
     const cargoBin = "C:\\.android\\cargo\\bin";
@@ -39,6 +121,8 @@ const result = spawnSync(command, process.argv.slice(2), {
     stdio: "inherit",
     windowsHide: false,
 });
+
+if (process.argv.includes("init")) syncAndroidProject();
 
 if (result.error) {
     console.error(result.error.message);
