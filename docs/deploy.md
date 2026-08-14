@@ -2,19 +2,14 @@
 
 ## Requisitos
 
-- Servidor Linux con Bash, OpenSSL, Docker Engine y Docker Compose v2.
-- Un dominio que resuelva a la IP del servidor.
-- Reloj del servidor sincronizado mediante NTP. La autenticación rechaza peticiones con más de
-  cinco minutos de desfase.
-- Puerto TCP `8443` accesible, o el puerto `443` si se configura `LUMO_API_PORT=443`.
-- Certificado TLS válido para el dominio usado por la aplicación.
+- Linux, OpenSSL, `jq`, Docker Engine y Docker Compose `2.24.4` o posterior.
+- Dominio HTTPS y reloj sincronizado por NTP.
+- Certificado y clave PEM disponibles para el contenedor.
+- Nginx u otro proxy que preserve método, ruta, cuerpo y cabeceras `Authorization` y `X-Lumo-*`.
 
-La versión actual mantiene un único estado compartido. Despliega una instancia, volumen, dominio y
-secreto independientes por grupo o entorno.
+## Configuración del servidor
 
-## Archivos del servidor
-
-Desde la raíz del repositorio:
+Archivos no versionados:
 
 ```text
 .env
@@ -22,20 +17,53 @@ certs/fullchain.pem
 certs/privkey.pem
 ```
 
-`.env` y `certs/` están excluidos de Git y del contexto de construcción de Docker.
-
-Genera un secreto aleatorio y crea el archivo `.env`:
+En una instalación nueva deja que el script genere `.env` sin reutilizar ninguna credencial
+antigua del cliente:
 
 ```bash
-umask 077
-printf 'LUMO_API_PASSWORD=%s\nLUMO_API_PORT=8443\n' "$(openssl rand -hex 32)" > .env
+./scripts/deploy.sh --prepare-only
 ```
 
-No uses espacios, un secreto reutilizado ni una variable `VITE_*`. El secreto debe tener al menos
-32 bytes y debe coincidir exactamente con el usado al compilar los clientes.
+El script se niega a generar una clave si detecta un contenedor `lumo-api` o un volumen
+`lumo-data`, incluso si están parados. En ese caso recupera el `.env` original o una copia cifrada;
+no continúes con una clave nueva. `LUMO_ENABLE_LEGACY_V1=false` debe estar declarado de forma
+explícita.
 
-Copia el certificado y la clave como archivos reales. No uses enlaces simbólicos hacia rutas que no
-estén montadas en el contenedor:
+La identidad Docker también es persistente. Una instalación nueva usa estos valores, que no deben
+cambiar al mover o renombrar el checkout:
+
+```dotenv
+COMPOSE_PROJECT_NAME=lumo
+LUMO_DATA_VOLUME=lumo_lumo-data
+```
+
+Antes de recrear nada, el script compara ambos valores con los labels y el mount `/data` del
+contenedor vivo. Si el VPS histórico usa otros nombres, configura en `.env` exactamente los que
+muestre `docker inspect`; el script falla en vez de crear un segundo volumen o un segundo alias
+`lumo-api` en la red de Nginx.
+
+`LUMO_SERVER_MASTER_KEY` cifra las claves de estado en SQLite y nunca se compila en la APK. Debe
+guardarse junto con las copias de seguridad. La base conserva un verificador no reversible y la
+API se niega a arrancar si la clave configurada no coincide. No borres ni regeneres `.env` mientras
+exista un volumen de datos. Variables opcionales:
+
+```dotenv
+LUMO_MAX_GROUPS=1000
+LUMO_MAX_DEVICES_PER_GROUP=8
+LUMO_MAX_ACTIVE_INVITES_PER_GROUP=8
+LUMO_BOOTSTRAP_PER_IP=5
+LUMO_BOOTSTRAP_GLOBAL=100
+LUMO_BOOTSTRAP_WINDOW_SECONDS=3600
+LUMO_INVITE_TTL_SECONDS=600
+```
+
+Activa `LUMO_TRUST_PROXY_HEADERS=true` sólo si la API no es accesible directamente y el proxy
+sobrescribe la IP recibida; de lo contrario un cliente podría falsear la clave del rate limit.
+Cuando Cloudflare esté delante, configura `real_ip_header CF-Connecting-IP` exclusivamente para
+sus rangos oficiales y deja que Nginx escriba `X-Real-IP`; no reenvíes un `X-Real-IP` aportado por
+el cliente.
+
+Instala los certificados de forma que el UID `10001` pueda leerlos:
 
 ```bash
 mkdir -p certs
@@ -44,118 +72,194 @@ sudo install -o 10001 -g "$deploy_group" -m 0444 /ruta/fullchain.pem certs/fullc
 sudo install -o 10001 -g "$deploy_group" -m 0440 /ruta/privkey.pem certs/privkey.pem
 ```
 
-El proceso se ejecuta con UID `10001`, por lo que necesita permiso de lectura sobre ambos archivos.
-El grupo del usuario de despliegue también necesita leer la clave para que el script pueda validarla
-sin ejecutarse como `root`; ningún otro usuario recibe acceso a ella.
+## Proxy Docker
 
-### Proxy inverso en Docker
-
-Si Nginx se ejecuta en Docker, usa la red externa del proxy y no publiques el puerto de la API en
-el host:
+Si Nginx comparte una red Docker con la API:
 
 ```dotenv
 COMPOSE_FILE=docker-compose.yml:docker-compose.proxy.yml
 LUMO_PROXY_NETWORK=nombre_de_la_red_nginx
+LUMO_TRUST_PROXY_HEADERS=true
 ```
 
-El overlay `docker-compose.proxy.yml` elimina los puertos publicados, limita memoria, CPU, procesos
-y logs, monta el sistema de archivos como sólo lectura y conserva escritura únicamente en `/data`.
-Nginx puede resolver el upstream como `https://lumo-api:8443` dentro de la red compartida.
+El Compose base ya aplica filesystem de sólo lectura salvo `/data`, elimina capabilities, impide
+elevar privilegios y limita CPU, memoria, procesos y logs. El overlay sólo elimina el puerto
+loopback y conecta la API a la red externa del proxy. El proxy debe aceptar `/health` y `/v2/`;
+`/v1/` debe quedar bloqueado. Configuración mínima:
 
-## Primer despliegue
+```nginx
+# Docker DNS. La variable obliga a Nginx a resolver de nuevo el contenedor recreado.
+resolver 127.0.0.11 valid=10s ipv6=off;
+set $lumo_api_upstream lumo-api:8443;
 
-Prepara `.env` y el directorio de certificados sin arrancar servicios:
+location = /health {
+    proxy_pass https://$lumo_api_upstream$request_uri;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+
+location ^~ /v2/ {
+    client_max_body_size 1m;
+    proxy_pass https://$lumo_api_upstream$request_uri;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header Connection "";
+}
+
+location ^~ /v1/ { return 410; }
+```
+
+## Despliegue
+
+Preparación sin iniciar contenedores:
 
 ```bash
 ./scripts/deploy.sh --prepare-only
 ```
 
-Instala el certificado como se indica arriba y ejecuta el despliegue:
+Despliegue y healthcheck:
 
 ```bash
+export LUMO_TLS_HOSTNAME=api.example.com
+export LUMO_PUBLIC_URL=https://api.example.com
+# Opcional: comprueba que otro sitio servido por el mismo proxy no cambie.
+export LUMO_GUARD_URL=https://example.com
 ./scripts/deploy.sh
+curl --fail --silent --show-error https://api.example.com/health
 ```
 
-El script valida el secreto, Docker Compose, la caducidad del certificado, la correspondencia entre
-certificado y clave, los permisos de lectura, construye la imagen y espera hasta 60 segundos a que
-el contenedor esté saludable.
+`LUMO_PUBLIC_URL` es obligatorio: el despliegue no se acepta hasta comprobar el health v2, el
+`410` de `/v1/state` y el `405` de `GET /v2/groups` a través del proxy real. El script también
+rechaza puertos que no estén limitados a loopback y comprueba que el overlay no publique ninguno.
 
-Comprueba el endpoint TLS desde otra máquina:
+Si ya existe un contenedor o volumen, el script guarda `.env`, el entorno efectivo anterior y una
+copia coherente de `/data` en `backups/<fecha>`, y etiqueta la imagen anterior como
+`lumo-api:rollback-<fecha>`. En una actualización v2 normal, si falla un gate posterior vuelve a la
+imagen y entorno v2 anteriores usando el volumen vivo, y sólo declara éxito si el Nginx real vuelve
+a cumplir health v2, `v1=410` y `GET groups=405`. La copia previa nunca se escribe automáticamente
+sobre el volumen: el candidato pudo confirmar escrituras después del cutover y rebobinarlo las
+perdería. Sólo detiene o recrea `lumo-api`; nunca usa `down`, `--remove-orphans` ni modifica Nginx
+u otros servicios del portfolio.
+
+### Primer cutover de v1 a v2
+
+La imagen v1 no es un rollback operativo detrás de un Nginx que devuelve `410` para `/v1/`. Este
+primer cambio requiere ventana de mantenimiento y la opción explícita `--first-v2-cutover`. Antes
+de actualizar el checkout, captura la identidad y conserva la credencial v1 existente:
 
 ```bash
-curl --fail --silent --show-error https://api.example.com:8443/health
+cid="$(docker ps --all --quiet --filter label=com.docker.compose.service=lumo-api)"
+test -n "$cid" && test "$(wc -w <<<"$cid")" -eq 1
+project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$cid")"
+data_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "$cid")"
+test -n "$project" && test -n "$data_volume"
+
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -m 0700 -p "backups/pre-v2-$stamp"
+install -m 0600 .env "backups/pre-v2-$stamp/env.v1"
+umask 077
+{
+  printf 'COMPOSE_PROJECT_NAME=%s\n' "$project"
+  printf 'LUMO_DATA_VOLUME=%s\n' "$data_volume"
+  printf 'LUMO_SERVER_MASTER_KEY=%s\n' "$(openssl rand -hex 32)"
+  printf 'LUMO_ENABLE_LEGACY_V1=false\n'
+} >>.env
+chmod 0600 .env
 ```
+
+Precalienta la compilación mientras v1 todavía sirve tráfico, instala y valida la configuración
+Nginx anterior, bloquea `/v1/` y ejecuta el cutover:
+
+```bash
+git pull --ff-only
+docker compose build --pull lumo-api
+docker exec nombre_contenedor_nginx nginx -t
+docker exec nombre_contenedor_nginx nginx -s reload
+export LUMO_TLS_HOSTNAME=api.example.com
+export LUMO_PUBLIC_URL=https://api.example.com
+./scripts/deploy.sh --first-v2-cutover
+```
+
+Si falla después de recrear, el script detiene `lumo-api`, conserva el volumen vivo y la copia, y
+sale con error; no restaura v1 ni anuncia un rollback sano. Revertir a v1 exige una recuperación
+manual en mantenimiento que restaure también la configuración Nginx v1. Las filas v1 se conservan
+en SQLite, pero no se exponen como grupos v2: los clientes deben realizar un emparejamiento v2 nuevo.
 
 Respuesta esperada:
 
 ```json
-{ "status": "ok", "apiVersion": "v1" }
+{"status":"ok","apiVersion":"v2"}
 ```
-
-Si el host publica `443`, usa `LUMO_API_PORT=443` y omite `:8443` en la URL. El contenedor siempre
-escucha en `8443`; Compose realiza el mapeo del puerto externo.
 
 ## Configuración del cliente
 
-En el `.env` usado para compilar la aplicación:
+La compilación móvil sólo necesita el origen público:
 
 ```dotenv
 LUMO_RUNTIME_MODE=remote
-LUMO_API_URL=https://api.example.com:8443
-LUMO_API_PASSWORD=el-mismo-secreto-del-servidor
+LUMO_API_URL=https://api.example.com
 ```
 
-El nombre de host debe coincidir con el certificado. Después de cambiar estas variables hay que
-recompilar e instalar de nuevo la aplicación; no se leen dinámicamente desde JavaScript.
+No declares `LUMO_SERVER_MASTER_KEY`, tokens de dispositivo ni PIN en el entorno del cliente o en
+variables `VITE_*`. La credencial revocable se obtiene al crear o consumir una invitación y se
+protege con Android Keystore.
 
-El wrapper de Tauri deriva `VITE_LUMO_API_ORIGIN` de `LUMO_API_URL` y sólo expone ese origen público
-al frontend para rechazar invitaciones QR creadas para otra API. No definas esa variable a mano ni
-dupliques el secreto en variables `VITE_*`.
+## Contrato v2
 
-## Contrato HTTP v1
+- `POST /v2/groups`: crea grupo y controlador; requiere un `requestId` estable y está limitado por
+  IP, cuota global y máximo de grupos.
+- `GET|PUT /v2/groups/{groupId}/state/compact`: estado canónico cifrado, accesible sólo por el
+  controlador, con `ETag` y CAS por revisión.
+- `GET /v2/groups/{groupId}/member`: vista cifrada de mínimo privilegio para el controlado. No
+  contiene PIN, clave del controlador, lugares, historial ni comandos.
+- `POST /v2/groups/{groupId}/member/operations`: operaciones tipadas e idempotentes del controlado
+  (ubicación, conectividad, seguimiento y ayuda); nunca acepta un estado arbitrario.
+- `POST /v2/groups/{groupId}/verify-pin`: valida una acción protegida para un dispositivo activo.
+- `POST /v2/groups/{groupId}/invitations`: sólo controlador y PIN correcto.
+- `POST /v2/invitations/{invitationId}/consume`: token de 256 bits, PIN, `requestId`, caducidad y
+  consumo único.
+- `GET /v2/groups/{groupId}/devices`: lista dispositivos activos del grupo.
+- `DELETE /v2/groups/{groupId}/devices/{deviceId}`: sólo controlador; revoca un controlado tras
+  comprobar el PIN.
+- `POST /v2/groups/{groupId}/leave`: revoca el propio dispositivo controlado con PIN.
+- `DELETE /v2/groups/{groupId}`: elimina el grupo desde el controlador con PIN.
 
-- `/health` comprueba que SQLite responde y no requiere autenticación.
-- `/v1/state/compact` es el transporte preferido. Usa base64url, `ETag` y `If-None-Match`.
-- `/v1/state` se conserva como fallback compatible durante la transición.
-- Las escrituras mantienen CAS por revisión. El cliente confirma respuestas ambiguas y reintenta
-  conflictos recargando el estado antes de repetir la operación.
+Las rutas autenticadas usan token Bearer por dispositivo, identificador, fecha y nonce. SQLite
+guarda un hash con clave del token, no el token recuperable. El controlador recibe la clave del
+estado canónico y cada controlado una clave de miembro distinta. Las respuestas de alta y consumo
+se guardan cifradas durante 24 horas para que repetir el mismo `requestId` tras perder una respuesta
+no cree dispositivos huérfanos.
 
-Nginx debe conservar método, ruta y cuerpo sin reescribirlos: esos valores forman parte de la firma
-HMAC. No registres las cabeceras `x-lumo-signature` ni el cuerpo de las peticiones.
+Las claves se conservan envueltas con `LUMO_SERVER_MASTER_KEY`. El contenido está cifrado en disco
+y en los sobres de aplicación, pero el servidor puede desenvolverlo para aplicar operaciones de
+ubicación y geocercas: este diseño no pretende ser cifrado de extremo a extremo frente al operador
+del VPS.
 
-## Operación
+## Datos y límites
 
-Estado y logs:
+- Eventos visibles: 24 horas y máximo definido por el dominio.
+- Ubicación: sólo la muestra más reciente en el estado; las muestras antiguas no hacen retroceder
+  la posición.
+- Invitaciones, nonces, respuestas idempotentes y ventanas de rate limit: limpieza automática.
+- Estado cifrado: tamaño máximo 512 KiB por grupo.
+- Logs Docker: tres archivos de 10 MiB en ambos modos de despliegue.
+
+Los grupos activos no se eliminan a las 24 horas. Su tamaño está acotado y se eliminan mediante
+la acción protegida del controlador.
+
+## Operación y copia de seguridad
 
 ```bash
 docker compose ps
 docker compose logs --tail=100 lumo-api
-docker compose logs --follow lumo-api
-```
-
-Actualización:
-
-```bash
 git pull --ff-only
-docker compose config --quiet
-docker compose build --pull
-docker compose up -d --remove-orphans
-curl --fail --silent --show-error https://api.example.com:8443/health
+export LUMO_TLS_HOSTNAME=api.example.com
+export LUMO_PUBLIC_URL=https://api.example.com
+./scripts/deploy.sh
 ```
 
-Renovación del certificado:
-
-```bash
-deploy_group="$(id -g)"
-sudo install -o 10001 -g "$deploy_group" -m 0444 /ruta/fullchain.pem certs/fullchain.pem
-sudo install -o 10001 -g "$deploy_group" -m 0440 /ruta/privkey.pem certs/privkey.pem
-docker compose restart lumo-api
-```
-
-## Copia de seguridad
-
-El estado persistente está en el volumen `lumo-data`, dentro de `/data`. Detén el servicio antes de
-copiar SQLite para incluir de forma consistente la base y sus posibles archivos WAL:
+Copia coherente de SQLite:
 
 ```bash
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -163,38 +267,26 @@ mkdir -p "backups/$timestamp"
 docker compose stop lumo-api
 docker compose cp lumo-api:/data/. "backups/$timestamp/"
 docker compose start lumo-api
+git rev-parse HEAD >"backups/$timestamp/git-revision.txt"
 ```
 
-Guarda junto a la copia la versión desplegada:
+Guarda por separado una copia cifrada de `.env`. Sin el mismo `LUMO_SERVER_MASTER_KEY` no pueden
+recuperarse las claves de estado existentes. La rotación destructiva exige copia, estado nuevo y
+nuevo emparejamiento; no cambies la clave durante una actualización normal.
 
-```bash
-git rev-parse HEAD > "backups/$timestamp/git-revision.txt"
-```
-
-Verifica periódicamente la restauración en una instancia aislada. La copia de SQLite no sustituye
-el secreto: sin el mismo `LUMO_API_PASSWORD`, los clientes no pueden descifrar el estado.
-
-El servidor conserva un único estado cifrado con límites de tamaño; los eventos visibles se filtran
-a 24 horas y se limitan a 200. SQLite hace checkpoints automáticos y limita el journal a 16 MiB. El
-overlay de proxy rota los logs de Docker a tres archivos de 10 MiB.
-
-## Rotación del secreto
-
-El secreto autentica las peticiones y deriva la clave que cifra el estado remoto. Cambiarlo sólo en
-el servidor deja los clientes sin acceso; cambiarlo también en los clientes hace ilegible el estado
-ya almacenado.
-
-Esta versión no incluye migración de claves. Una rotación requiere una ventana planificada, copia de
-seguridad, reinicio del estado remoto, recompilación de todos los clientes y nuevo emparejamiento.
-No elimines el volumen como parte de una actualización normal.
+Cada directorio automático contiene `data/`, `env.backup`, `previous-container.env`, el identificador
+de la imagen previa y `rollback-compose.yml`. No borres estos artefactos hasta validar la aplicación
+desde un cliente real. `data/` es recuperación manual, no rollback automático. Si el rollback v2 o
+el primer cutover fallan, conserva el volumen y los artefactos sin ejecutar `down -v`; revisa los
+logs y restaura primero en un volumen aislado antes de sustituir datos vivos.
 
 ## Diagnóstico
 
-- `health: starting` o `unhealthy`: revisa `docker compose logs lumo-api` y que el proceso pueda leer
-  los certificados.
-- Error TLS: comprueba dominio, cadena completa, caducidad y puerto publicado.
-- `authentication_failed`: el cliente y el servidor no comparten el mismo secreto o sus relojes
-  están desincronizados.
-- `revision_conflict`: otro dispositivo actualizó el estado; el cliente debe refrescar y reintentar.
-- El endpoint `/health` funciona pero la aplicación no conecta: confirma que `LUMO_API_URL` usa
-  `https://`, el puerto correcto y el mismo nombre incluido en el certificado.
+- `401 authentication_failed`: token ausente, inválido o revocado.
+- `403 unauthorized`: el rol no puede ejecutar esa operación.
+- `403 tracking_disabled`: el dispositivo sigue emparejado, pero el seguimiento está apagado.
+- `409 replay_detected`: nonce repetido.
+- `409 idempotency_conflict`: un `requestId` se reutilizó con datos diferentes.
+- `409 revision_conflict`: recargar el estado y repetir la operación.
+- `429 rate_limited`: esperar a que venza la ventana o revisar los límites.
+- `/health` responde pero la app no conecta: comprobar `LUMO_API_URL`, certificado, proxy y reloj.

@@ -1,6 +1,17 @@
 $ErrorActionPreference = "Stop"
 
 $cargoScript = Join-Path $PSScriptRoot "cargo-lumo.ps1"
+$projectRoot = Split-Path -Parent $PSScriptRoot
+
+$clientSecretReferences = & rg -n "LUMO_(API_PASSWORD|SERVER_MASTER_KEY)" `
+    (Join-Path $projectRoot "mobile/src-tauri/build.rs") `
+    (Join-Path $projectRoot "mobile/src-tauri/src") `
+    (Join-Path $projectRoot "crates/lumo-runtime/src")
+if ($LASTEXITCODE -eq 0) {
+    $clientSecretReferences | Write-Error
+    throw "Server secrets must never be referenced by client source code."
+}
+if ($LASTEXITCODE -ne 1) { exit $LASTEXITCODE }
 
 & $cargoScript fmt --all "--" "--check"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

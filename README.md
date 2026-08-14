@@ -7,17 +7,18 @@ Family location, simply.
 ```text
 crates/
   lumo-core/       Dominio, PIN, invitaciones, geocercas y eventos
-  lumo-protocol/   Contrato cifrado y autenticación de la API
-  lumo-runtime/    Persistencia local/remota y binarios de diagnóstico
-  lumo-api/        Relay Axum con almacenamiento opaco
+  lumo-protocol/   Contrato v2, credenciales y sobres cifrados
+  lumo-runtime/    Persistencia, cliente HTTPS y binarios de diagnóstico
+  lumo-api/        API Axum aislada por grupo y dispositivo
 mobile/            Aplicación Tauri + React
+plugins/           Integración Android y Android Keystore
 scripts/           Verificación reproducible del backend
 ```
 
-El workspace funciona sin red mediante SQLite cifrado y queda preparado para usar el mismo dominio
-contra `lumo-api` por HTTPS. La configuración y los límites actuales están documentados en
-[`docs/backend-local.md`](docs/backend-local.md). El procedimiento de servidor está en
-[`docs/deploy.md`](docs/deploy.md).
+El modo local funciona sin red mediante SQLite. En remoto, cada dispositivo recibe una credencial
+revocable durante el emparejamiento y el APK no contiene secretos del servidor. La configuración
+está documentada en [`docs/backend-local.md`](docs/backend-local.md). El procedimiento de servidor
+está en [`docs/deploy.md`](docs/deploy.md).
 
 ## Desarrollo
 
