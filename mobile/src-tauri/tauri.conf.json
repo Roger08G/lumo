@@ -18,6 +18,7 @@
             }
         ],
         "security": {
+            "freezePrototype": true,
             "csp": {
                 "default-src": "'self' customprotocol: asset:",
                 "connect-src": "ipc: http://ipc.localhost",
@@ -25,10 +26,13 @@
                 "img-src": "'self' asset: http://asset.localhost blob: data:",
                 "style-src": "'self' 'unsafe-inline'",
                 "object-src": "'none'",
+                "worker-src": "'none'",
+                "form-action": "'none'",
+                "manifest-src": "'self'",
                 "base-uri": "'none'",
                 "frame-ancestors": "'none'"
             },
-            "devCsp": "default-src 'self' customprotocol: asset:; connect-src ipc: http://ipc.localhost ws://localhost:* ws://127.0.0.1:*; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+            "devCsp": "default-src 'self' customprotocol: asset:; connect-src ipc: http://ipc.localhost ws://localhost:* ws://127.0.0.1:*; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; object-src 'none'; worker-src 'none'; form-action 'none'; manifest-src 'self'; base-uri 'none'; frame-ancestors 'none'"
         }
     },
     "bundle": {

@@ -10,24 +10,41 @@ import {
 import { resolve } from "node:path";
 
 const env = { ...process.env };
+const rootEnvPath = resolve("../.env");
+const rootEnv = existsSync(rootEnvPath) ? readFileSync(rootEnvPath, "utf8") : "";
 
-function exposePublicApiOrigin() {
-    const envPath = resolve("../.env");
-    if (!existsSync(envPath)) return;
-    const match = readFileSync(envPath, "utf8").match(/^LUMO_API_URL\s*=\s*(.+?)\s*$/m);
-    if (!match) return;
-    const value = match[1].replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, "$1$2").trim();
+function configValue(key) {
+    const direct = env[key]?.trim();
+    if (direct) return direct;
+    const match = rootEnv.match(new RegExp(`^${key}\\s*=\\s*(.+?)\\s*$`, "m"));
+    return match?.[1].replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, "$1$2").trim() ?? null;
+}
+
+function publicApiOrigin() {
+    const value = configValue("LUMO_API_URL");
+    if (!value) return null;
     try {
         const url = new URL(value);
         if (url.protocol === "https:" && url.username === "" && url.password === "") {
-            env.VITE_LUMO_API_ORIGIN = url.origin;
+            return url.origin;
         }
     } catch {
         // Rust configuration reports the authoritative error without exposing other .env values.
     }
+    return null;
 }
 
-exposePublicApiOrigin();
+const apiOrigin = publicApiOrigin();
+if (apiOrigin) env.VITE_LUMO_API_ORIGIN = apiOrigin;
+
+if (
+    process.argv.includes("build") &&
+    configValue("LUMO_RUNTIME_MODE")?.toLowerCase() === "remote" &&
+    !apiOrigin
+) {
+    console.error("Remote builds require a valid HTTPS LUMO_API_URL for QR origin validation.");
+    process.exit(1);
+}
 
 function syncAndroidProject() {
     const tauriConfigPath = resolve("src-tauri/tauri.conf.json");
