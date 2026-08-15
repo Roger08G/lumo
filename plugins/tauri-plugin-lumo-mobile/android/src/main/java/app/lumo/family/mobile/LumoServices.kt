@@ -9,15 +9,19 @@ import android.content.pm.ServiceInfo
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 internal object LumoServiceController {
     const val ROLE_CONTROLLED = "controlled"
@@ -46,6 +50,14 @@ internal object LumoServiceController {
         context.stopService(Intent(context, LumoLocationService::class.java))
         context.stopService(Intent(context, LumoControllerService::class.java))
     }
+
+    fun restartIfConfigured(context: Context): Boolean {
+        if (!LumoPreferences.isEnabled(context)) return false
+        val role = LumoPreferences.role(context) ?: return false
+        if (role != ROLE_CONTROLLED && role != ROLE_CONTROLLER) return false
+        start(context, role, LumoPreferences.intervalSeconds(context))
+        return true
+    }
 }
 
 internal abstract class LumoForegroundService : Service() {
@@ -55,6 +67,8 @@ internal abstract class LumoForegroundService : Service() {
 
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
     private var future: ScheduledFuture<*>? = null
+    private val immediateTickPending = AtomicBoolean(false)
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
     protected var foregroundStarted = false
         private set
 
@@ -73,6 +87,7 @@ internal abstract class LumoForegroundService : Service() {
             )
         }.onSuccess {
             foregroundStarted = true
+            registerNetworkRecovery()
         }.onFailure {
             stopForUnavailablePrerequisites()
         }
@@ -94,16 +109,15 @@ internal abstract class LumoForegroundService : Service() {
         // WebView task is dismissed, so request the same foreground service again while this
         // service is still allowed to start foreground work. A force-stop remains intentionally
         // unrecoverable until Android lets the user open the app again.
-        if (LumoPreferences.isEnabled(this) && LumoPreferences.role(this) == role) {
-            runCatching {
-                LumoServiceController.start(this, role, LumoPreferences.intervalSeconds(this))
-            }
+        if (LumoPreferences.role(this) == role) {
+            runCatching { LumoServiceController.restartIfConfigured(this) }
         }
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
         future?.cancel(false)
+        unregisterNetworkRecovery()
         scheduler.shutdownNow()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         super.onDestroy()
@@ -121,6 +135,19 @@ internal abstract class LumoForegroundService : Service() {
         LumoTickProcessor.process(applicationContext, role, sampleLocation())
     }
 
+    protected fun requestImmediateTick() {
+        if (scheduler.isShutdown || !immediateTickPending.compareAndSet(false, true)) return
+        runCatching {
+            scheduler.execute {
+                try {
+                    runCatching(::runTickWhileAwake)
+                } finally {
+                    immediateTickPending.set(false)
+                }
+            }
+        }.onFailure { immediateTickPending.set(false) }
+    }
+
     protected open fun prerequisitesMet(): Boolean =
         LumoDeviceStatus.notificationsGranted(applicationContext)
 
@@ -134,11 +161,46 @@ internal abstract class LumoForegroundService : Service() {
         future?.cancel(false)
         future =
             scheduler.scheduleWithFixedDelay(
-                { runCatching(::runTick) },
+                { runCatching(::runTickWhileAwake) },
                 0,
                 intervalSeconds,
                 TimeUnit.SECONDS,
             )
+    }
+
+    private fun runTickWhileAwake() {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val wakeLock =
+            powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "${packageName}:lumo-background-sync",
+            )
+        wakeLock.setReferenceCounted(false)
+        try {
+            wakeLock.acquire(TimeUnit.SECONDS.toMillis(60))
+            runTick()
+        } finally {
+            if (wakeLock.isHeld) wakeLock.release()
+        }
+    }
+
+    private fun registerNetworkRecovery() {
+        val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val callback =
+            object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    requestImmediateTick()
+                }
+            }
+        runCatching { manager.registerDefaultNetworkCallback(callback) }
+            .onSuccess { networkCallback = callback }
+    }
+
+    private fun unregisterNetworkRecovery() {
+        val callback = networkCallback ?: return
+        val manager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        runCatching { manager.unregisterNetworkCallback(callback) }
+        networkCallback = null
     }
 }
 
@@ -174,6 +236,7 @@ internal class LumoLocationService : LumoForegroundService(), LocationListener {
         if (!isFresh(location)) return
         if (latestLocation?.let { current -> isNewer(location, current) } != false) {
             latestLocation = location
+            requestImmediateTick()
         }
     }
 
@@ -192,7 +255,11 @@ internal class LumoLocationService : LumoForegroundService(), LocationListener {
             return
         }
         val intervalMs = LumoPreferences.intervalSeconds(this) * 1000L
-        listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER).forEach { provider ->
+        listOf(
+            LocationManager.GPS_PROVIDER,
+            LocationManager.NETWORK_PROVIDER,
+            LocationManager.PASSIVE_PROVIDER,
+        ).forEach { provider ->
             runCatching {
                 if (locationManager.isProviderEnabled(provider)) {
                     locationManager.getLastKnownLocation(provider)?.let(::onLocationChanged)
