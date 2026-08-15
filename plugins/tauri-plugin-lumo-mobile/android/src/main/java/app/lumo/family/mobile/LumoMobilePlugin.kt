@@ -4,6 +4,8 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
+import android.location.Address
+import android.location.Geocoder
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -17,6 +19,7 @@ import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import org.json.JSONObject
+import java.util.Locale
 
 private const val ALIAS_PRECISE_LOCATION = "preciseLocation"
 private const val ALIAS_BACKGROUND_LOCATION = "backgroundLocation"
@@ -45,6 +48,20 @@ class NotificationArgs {
     lateinit var title: String
     lateinit var body: String
     var urgent: Boolean = false
+}
+
+@InvokeArg
+class CoordinatesArgs {
+    var latitude: Double = Double.NaN
+    var longitude: Double = Double.NaN
+}
+
+@InvokeArg
+class EmergencyAlarmArgs {
+    lateinit var id: String
+    lateinit var title: String
+    lateinit var body: String
+    var phone: String? = null
 }
 
 @TauriPlugin(
@@ -148,6 +165,7 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
         LumoPreferences.clearControllerNotifications(context)
         LumoPreferences.clearControlledTrackingChoice(context)
         LumoServiceController.stop(context)
+        LumoEmergencyAlarm.stop(context)
         if (cleared) {
             invoke.resolve()
         } else {
@@ -283,6 +301,45 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     @Command
+    fun reverseGeocode(invoke: Invoke) {
+        val args = runCatching { invoke.parseArgs(CoordinatesArgs::class.java) }.getOrElse {
+            invoke.reject("Las coordenadas no son válidas")
+            return
+        }
+        if (
+            !args.latitude.isFinite() || args.latitude !in -90.0..90.0 ||
+                !args.longitude.isFinite() || args.longitude !in -180.0..180.0
+        ) {
+            invoke.reject("Las coordenadas no son válidas")
+            return
+        }
+        if (!Geocoder.isPresent()) {
+            invoke.resolve(JSObject().put("address", JSONObject.NULL))
+            return
+        }
+
+        val geocoder = Geocoder(activity.applicationContext, Locale.getDefault())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            geocoder.getFromLocation(args.latitude, args.longitude, 1) { addresses ->
+                resolveAddress(invoke, addresses.firstOrNull())
+            }
+        } else {
+            Thread {
+                @Suppress("DEPRECATION")
+                val address =
+                    runCatching {
+                        geocoder.getFromLocation(args.latitude, args.longitude, 1)?.firstOrNull()
+                    }.getOrNull()
+                resolveAddress(invoke, address)
+            }.apply {
+                name = "lumo-reverse-geocoder"
+                isDaemon = true
+                start()
+            }
+        }
+    }
+
+    @Command
     fun showNotification(invoke: Invoke) {
         val args = runCatching { invoke.parseArgs(NotificationArgs::class.java) }.getOrElse {
             invoke.reject("La notificación no es válida")
@@ -306,6 +363,49 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
         } else {
             invoke.reject("Las notificaciones de Android están desactivadas")
         }
+    }
+
+    @Command
+    fun startEmergencyAlarm(invoke: Invoke) {
+        val args = runCatching { invoke.parseArgs(EmergencyAlarmArgs::class.java) }.getOrElse {
+            invoke.reject("La alarma no es válida")
+            return
+        }
+        if (args.id.isBlank() || args.title.isBlank() || args.body.isBlank()) {
+            invoke.reject("La alarma no es válida")
+            return
+        }
+        val phone =
+            args.phone
+                ?.trim()
+                ?.takeIf { value ->
+                    value.count(Char::isDigit) in 7..15 &&
+                        value.matches(Regex("^[+]?[0-9 ()-]+$"))
+                }
+        runCatching {
+            LumoEmergencyAlarm.start(
+                activity.applicationContext,
+                LumoPendingAlarm(args.id, args.title, args.body, phone),
+            )
+        }.onSuccess { invoke.resolve() }
+            .onFailure { invoke.reject("Android no ha podido iniciar la alarma") }
+    }
+
+    @Command
+    fun getPendingAlarm(invoke: Invoke) {
+        invoke.resolve(
+            JSObject().put(
+                "alarm",
+                LumoEmergencyAlarm.load(activity.applicationContext)?.toBridgeObject()
+                    ?: JSONObject.NULL,
+            ),
+        )
+    }
+
+    @Command
+    fun stopEmergencyAlarm(invoke: Invoke) {
+        LumoEmergencyAlarm.stop(activity.applicationContext)
+        invoke.resolve()
     }
 
     @Command
@@ -385,4 +485,19 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
 
     private fun validRole(role: String?): Boolean =
         role == LumoServiceController.ROLE_CONTROLLED || role == LumoServiceController.ROLE_CONTROLLER
+
+    private fun resolveAddress(invoke: Invoke, address: Address?) {
+        val formatted =
+            address?.getAddressLine(0)?.trim()?.takeIf(String::isNotEmpty)
+                ?: address
+                    ?.let {
+                        listOfNotNull(it.thoroughfare, it.locality, it.adminArea, it.countryName)
+                            .map(String::trim)
+                            .filter(String::isNotEmpty)
+                            .distinct()
+                            .joinToString(", ")
+                    }
+                    ?.takeIf(String::isNotEmpty)
+        invoke.resolve(JSObject().put("address", formatted?.take(240) ?: JSONObject.NULL))
+    }
 }

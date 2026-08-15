@@ -78,12 +78,45 @@ pub(crate) struct PhonePayload<'a> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub(crate) struct CoordinatesPayload {
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct AddressResponse {
+    pub address: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NotificationPayload<'a> {
     pub id: Option<&'a str>,
     pub title: &'a str,
     pub body: &'a str,
     pub urgent: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct EmergencyAlarmPayload<'a> {
+    pub id: &'a str,
+    pub title: &'a str,
+    pub body: &'a str,
+    pub phone: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingAlarm {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub phone: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct PendingAlarmResponse {
+    pub alarm: Option<PendingAlarm>,
 }
 
 #[cfg(test)]

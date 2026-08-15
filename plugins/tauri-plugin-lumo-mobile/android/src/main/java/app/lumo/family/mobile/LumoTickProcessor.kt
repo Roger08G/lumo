@@ -130,6 +130,19 @@ internal object LumoTickProcessor {
                 // exact root lets the foreground service and the UI share one repository.
                 .put("dataDir", context.dataDir.absolutePath)
                 .put("batteryPercent", LumoDeviceStatus.batteryPercent(context))
+                .put(
+                    "preciseLocationGranted",
+                    LumoDeviceStatus.preciseLocationGranted(context),
+                )
+                .put(
+                    "backgroundLocationGranted",
+                    LumoDeviceStatus.backgroundLocationStatus(context) in
+                        setOf("granted", "notRequired"),
+                )
+                .put(
+                    "batteryOptimizationDisabled",
+                    LumoDeviceStatus.batteryOptimizationDisabled(context),
+                )
         if (location != null) {
             payload.put(
                 "location",
@@ -199,14 +212,26 @@ internal object LumoTickProcessor {
             val id = notification.optString("id").takeIf(String::isNotBlank) ?: continue
             val title = notification.optString("title").takeIf(String::isNotBlank) ?: continue
             val body = notification.optString("body")
-            LumoNotifications.show(
-                context = context,
-                id = id,
-                title = title,
-                body = body,
-                urgent = notification.optBoolean("urgent", false),
-                deduplicate = true,
-            )
+            if (notification.optBoolean("urgent", false)) {
+                LumoEmergencyAlarm.start(
+                    context,
+                    LumoPendingAlarm(
+                        id = id,
+                        title = title,
+                        body = body,
+                        phone = notification.optString("phone").takeIf(String::isNotBlank),
+                    ),
+                )
+            } else {
+                LumoNotifications.show(
+                    context = context,
+                    id = id,
+                    title = title,
+                    body = body,
+                    urgent = false,
+                    deduplicate = true,
+                )
+            }
         }
     }
 }

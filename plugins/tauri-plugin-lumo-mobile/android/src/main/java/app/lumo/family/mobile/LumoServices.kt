@@ -22,9 +22,9 @@ import java.util.concurrent.TimeUnit
 internal object LumoServiceController {
     const val ROLE_CONTROLLED = "controlled"
     const val ROLE_CONTROLLER = "controller"
-    const val MIN_INTERVAL_SECONDS = 15L
+    const val MIN_INTERVAL_SECONDS = 5L
     const val MAX_INTERVAL_SECONDS = 900L
-    const val DEFAULT_INTERVAL_SECONDS = 30L
+    const val DEFAULT_INTERVAL_SECONDS = 5L
     const val EXTRA_INTERVAL_SECONDS = "intervalSeconds"
 
     fun start(context: Context, role: String, intervalSeconds: Long) {
@@ -90,7 +90,15 @@ internal abstract class LumoForegroundService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // Keep the explicitly enabled foreground service alive when the UI task is dismissed.
+        // START_STICKY is the primary recovery mechanism. Some OEMs do not honour it when the
+        // WebView task is dismissed, so request the same foreground service again while this
+        // service is still allowed to start foreground work. A force-stop remains intentionally
+        // unrecoverable until Android lets the user open the app again.
+        if (LumoPreferences.isEnabled(this) && LumoPreferences.role(this) == role) {
+            runCatching {
+                LumoServiceController.start(this, role, LumoPreferences.intervalSeconds(this))
+            }
+        }
         super.onTaskRemoved(rootIntent)
     }
 
@@ -173,8 +181,7 @@ internal class LumoLocationService : LumoForegroundService(), LocationListener {
 
     override fun prerequisitesMet(): Boolean =
         super.prerequisitesMet() &&
-            LumoDeviceStatus.preciseLocationGranted(applicationContext) &&
-            LumoDeviceStatus.locationServicesEnabled(applicationContext)
+            LumoDeviceStatus.preciseLocationGranted(applicationContext)
 
     private fun startLocationUpdates() {
         if (
@@ -189,14 +196,17 @@ internal class LumoLocationService : LumoForegroundService(), LocationListener {
             runCatching {
                 if (locationManager.isProviderEnabled(provider)) {
                     locationManager.getLastKnownLocation(provider)?.let(::onLocationChanged)
-                    locationManager.requestLocationUpdates(
-                        provider,
-                        intervalMs,
-                        0f,
-                        this,
-                        Looper.getMainLooper(),
-                    )
                 }
+                // Keep the listener registered while the provider is disabled. Android resumes
+                // delivery automatically when the user enables location again, without requiring
+                // the Lumo UI or a manual "Reactivar seguimiento" action.
+                locationManager.requestLocationUpdates(
+                    provider,
+                    intervalMs,
+                    0f,
+                    this,
+                    Looper.getMainLooper(),
+                )
             }
         }
     }

@@ -6,7 +6,7 @@ mod queue_policy;
 
 pub use error::{Error, Result};
 pub use mobile::LumoMobile;
-pub use models::{DeviceCredential, MobileStatus};
+pub use models::{DeviceCredential, MobileStatus, PendingAlarm};
 
 use tauri::plugin::{Builder, TauriPlugin};
 use tauri::{Manager, Runtime};

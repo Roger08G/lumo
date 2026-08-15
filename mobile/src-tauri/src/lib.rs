@@ -100,7 +100,11 @@ pub fn run() {
             mobile::mobile_request_permissions,
             mobile::mobile_configure_tracking,
             mobile::mobile_open_phone_dialer,
+            mobile::mobile_reverse_geocode,
             mobile::mobile_show_notification,
+            mobile::mobile_start_emergency_alarm,
+            mobile::mobile_get_pending_alarm,
+            mobile::mobile_stop_emergency_alarm,
             mobile::mobile_open_battery_settings,
         ])
         .run(tauri::generate_context!())

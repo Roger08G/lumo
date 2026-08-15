@@ -21,7 +21,7 @@ internal object LumoNotifications {
     private const val TRACKING_CHANNEL = "lumo_tracking"
     private const val SYNC_CHANNEL = "lumo_sync"
     private const val ALERTS_CHANNEL = "lumo_alerts"
-    private const val URGENT_CHANNEL = "lumo_urgent"
+    const val URGENT_CHANNEL_ID = "lumo_urgent"
     private const val DEDUPE_FILE = "lumo_notification_history"
     private const val RETENTION_MS = 24 * 60 * 60 * 1000L
 
@@ -46,7 +46,7 @@ internal object LumoNotifications {
                     NotificationManager.IMPORTANCE_DEFAULT,
                 ),
                 NotificationChannel(
-                    URGENT_CHANNEL,
+                    URGENT_CHANNEL_ID,
                     context.getString(R.string.lumo_urgent_channel),
                     NotificationManager.IMPORTANCE_HIGH,
                 ).apply {
@@ -89,7 +89,7 @@ internal object LumoNotifications {
         if (deduplicate && id != null && !markIfNew(context, id)) return true
         ensureChannels(context)
         val notification =
-            baseBuilder(context, if (urgent) URGENT_CHANNEL else ALERTS_CHANNEL)
+            baseBuilder(context, if (urgent) URGENT_CHANNEL_ID else ALERTS_CHANNEL)
                 .setContentTitle(title.take(120))
                 .setContentText(body.take(500))
                 .setStyle(NotificationCompat.BigTextStyle().bigText(body.take(500)))
