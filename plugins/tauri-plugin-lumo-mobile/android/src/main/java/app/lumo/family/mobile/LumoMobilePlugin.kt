@@ -393,7 +393,7 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
                     title = args.title,
                     body = args.body,
                     phone = phone,
-                    address = args.address?.trim()?.take(240)?.takeIf(String::isNotEmpty),
+                    address = LumoAlarmPayloadPolicy.optionalText(args.address)?.take(240),
                     latitude = args.latitude?.takeIf { it.isFinite() && it in -90.0..90.0 },
                     longitude = args.longitude?.takeIf { it.isFinite() && it in -180.0..180.0 },
                 ),

@@ -257,8 +257,8 @@ internal object LumoTickProcessor {
                         id = id,
                         title = title,
                         body = body,
-                        phone = notification.optString("phone").takeIf(String::isNotBlank),
-                        address = notification.optString("address").takeIf(String::isNotBlank),
+                        phone = optionalText(notification, "phone"),
+                        address = optionalText(notification, "address"),
                         latitude = latitude,
                         longitude = longitude,
                     ),
@@ -275,4 +275,11 @@ internal object LumoTickProcessor {
             }
         }
     }
+
+    private fun optionalText(source: JSONObject, key: String): String? =
+        if (source.has(key) && !source.isNull(key)) {
+            LumoAlarmPayloadPolicy.optionalText(source.optString(key))
+        } else {
+            null
+        }
 }
