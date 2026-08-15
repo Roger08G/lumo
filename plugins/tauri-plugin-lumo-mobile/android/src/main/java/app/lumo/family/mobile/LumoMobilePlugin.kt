@@ -98,6 +98,9 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
 
     override fun onResume() {
         webView?.let(LumoSystemInsets::refresh)
+        runCatching {
+            LumoServiceController.restartIfConfigured(activity.applicationContext)
+        }
     }
 
     @Command

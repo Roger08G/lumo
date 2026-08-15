@@ -91,9 +91,12 @@ class LumoDeviceCredentialTest {
 
         assertTrue(manifest.contains("android:allowBackup=\"false\""))
         assertTrue(manifest.contains("android.permission.USE_FULL_SCREEN_INTENT"))
+        assertTrue(manifest.contains("android.permission.ACCESS_NETWORK_STATE"))
+        assertTrue(manifest.contains("android.permission.WAKE_LOCK"))
         assertTrue(manifest.contains("android:name=\".LumoAlarmActivity\""))
         assertTrue(manifest.contains("android:showWhenLocked=\"true\""))
         assertTrue(manifest.contains("android:turnScreenOn=\"true\""))
+        assertTrue(manifest.contains("android:stopWithTask=\"false\""))
         assertTrue(manifest.contains("android:fullBackupContent=\"@xml/lumo_backup_rules\""))
         assertTrue(
             manifest.contains(

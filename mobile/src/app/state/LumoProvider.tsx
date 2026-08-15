@@ -719,25 +719,6 @@ export function LumoProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         if (
-            !lumoBackend.isMobileNative() ||
-            state.mode === "controller" ||
-            state.mode === "tracker"
-        ) {
-            return;
-        }
-        void lumoBackend
-            .getMobileStatus()
-            .then((status) => {
-                if (status?.trackingEnabled && status.role) {
-                    return lumoBackend.configureMobileTracking(status.role, false);
-                }
-                return null;
-            })
-            .catch(() => undefined);
-    }, [state.mode]);
-
-    useEffect(() => {
-        if (
             state.mode !== "controller" ||
             !state.preferences.notifications ||
             !lumoBackend.isMobileNative()
