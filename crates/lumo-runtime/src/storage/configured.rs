@@ -62,8 +62,12 @@ impl ConfiguredRepository {
             .consume_invitation(request_id, invitation_id, token, pin, device_name)
     }
 
-    pub fn create_remote_invitation(&self, pin: &str) -> LumoResult<InvitationResponse> {
-        self.remote()?.create_invitation(pin)
+    pub fn create_remote_invitation(
+        &self,
+        pin: &str,
+        role: lumo_protocol::DeviceRole,
+    ) -> LumoResult<InvitationResponse> {
+        self.remote()?.create_invitation(pin, role)
     }
 
     pub fn verify_remote_pin(&self, pin: &str) -> LumoResult<()> {

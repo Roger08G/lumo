@@ -2,7 +2,7 @@ use lumo_core::{
     application::{CreateGroupInput, InvitationView},
     domain::{AppSnapshot, RuntimeProfile},
 };
-use lumo_protocol::DeviceSummary;
+use lumo_protocol::{DeviceRole, DeviceSummary};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
@@ -14,6 +14,13 @@ use super::error::{run_blocking, CommandResult};
 #[serde(rename_all = "camelCase")]
 pub struct VerifiedView {
     verified: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JoinedView {
+    verified: bool,
+    role: DeviceRole,
 }
 
 #[tauri::command]
@@ -96,6 +103,7 @@ pub async fn group_verify_pin(
 pub async fn group_create_invitation(
     state: State<'_, BackendState>,
     pin: String,
+    role: DeviceRole,
 ) -> CommandResult<InvitationView> {
     let backend = state.0.clone();
     let mode = state.2;
@@ -103,9 +111,11 @@ pub async fn group_create_invitation(
     state.1.require_controller()?;
     run_blocking(move || {
         if mode == lumo_runtime::RuntimeMode::Local {
-            return backend.create_invitation(&pin).map_err(Into::into);
+            let mut invitation = backend.create_invitation(&pin)?;
+            invitation.role = role.as_str().to_owned();
+            return Ok(invitation);
         }
-        let invitation = repository.create_remote_invitation(&pin)?;
+        let invitation = repository.create_remote_invitation(&pin, role)?;
         let session = backend
             .snapshot(RuntimeProfile::Controller)?
             .session
@@ -116,6 +126,7 @@ pub async fn group_create_invitation(
             group_name: session.group_name,
             group_code: session.group_code,
             expires_at_ms: invitation.expires_at_ms,
+            role: invitation.role.as_str().to_owned(),
         })
     })
     .await
@@ -128,7 +139,7 @@ pub async fn group_consume_invitation(
     invitation_id: String,
     token: String,
     pin: String,
-) -> CommandResult<VerifiedView> {
+) -> CommandResult<JoinedView> {
     let backend = state.0.clone();
     let binding = state.1.clone();
     let mode = state.2;
@@ -149,7 +160,10 @@ pub async fn group_consume_invitation(
         if mode == lumo_runtime::RuntimeMode::Local {
             backend.consume_invitation(&token, &pin)?;
             binding.bind(RuntimeProfile::Controlled)?;
-            return Ok(VerifiedView { verified: true });
+            return Ok(JoinedView {
+                verified: true,
+                role: DeviceRole::Controlled,
+            });
         }
         let request_id = onboarding.begin_join(&invitation_id)?;
         let credential = repository.consume_invitation(
@@ -157,9 +171,13 @@ pub async fn group_consume_invitation(
             &invitation_id,
             &token,
             &pin,
-            "Dispositivo controlado",
+            "Dispositivo Lumo",
         )?;
-        if let Err(error) = backend.snapshot(RuntimeProfile::Controlled) {
+        let (profile, role) = match credential.role() {
+            DeviceRole::Controller => (RuntimeProfile::Controller, DeviceRole::Controller),
+            DeviceRole::Controlled => (RuntimeProfile::Controlled, DeviceRole::Controlled),
+        };
+        if let Err(error) = backend.snapshot(profile) {
             if repository.leave_remote_group(&pin).is_ok() {
                 let _ = vault.clear(&app);
                 let _ = onboarding.confirm_onboarding();
@@ -173,9 +191,12 @@ pub async fn group_consume_invitation(
             }
             return Err(error.into());
         }
-        binding.bind(RuntimeProfile::Controlled)?;
+        binding.bind(profile)?;
         let _ = onboarding.confirm_onboarding();
-        Ok(VerifiedView { verified: true })
+        Ok(JoinedView {
+            verified: true,
+            role,
+        })
     })
     .await
 }
@@ -202,8 +223,9 @@ pub async fn group_leave(
             backend.leave_group(&pin)?;
         } else {
             match profile {
-                RuntimeProfile::Controller => repository.delete_remote_group(&pin)?,
-                RuntimeProfile::Controlled => repository.leave_remote_group(&pin)?,
+                RuntimeProfile::Controller | RuntimeProfile::Controlled => {
+                    repository.leave_remote_group(&pin)?
+                }
                 RuntimeProfile::Debug => return Err(lumo_core::LumoError::Unauthorized.into()),
             }
             let marker_result = onboarding.begin_leave();

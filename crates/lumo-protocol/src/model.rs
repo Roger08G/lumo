@@ -246,10 +246,11 @@ pub struct ApiErrorBody {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceRole {
     Controller,
+    #[default]
     Controlled,
 }
 
@@ -320,6 +321,8 @@ impl std::fmt::Debug for DeviceCredentialResponse {
 #[serde(rename_all = "camelCase")]
 pub struct CreateInvitationRequest {
     pub pin: String,
+    #[serde(default)]
+    pub role: DeviceRole,
 }
 
 impl std::fmt::Debug for CreateInvitationRequest {
@@ -327,6 +330,7 @@ impl std::fmt::Debug for CreateInvitationRequest {
         formatter
             .debug_struct("CreateInvitationRequest")
             .field("pin", &"[REDACTED]")
+            .field("role", &self.role)
             .finish()
     }
 }
@@ -337,6 +341,7 @@ pub struct InvitationResponse {
     pub invitation_id: String,
     pub token: String,
     pub expires_at_ms: i64,
+    pub role: DeviceRole,
 }
 
 impl std::fmt::Debug for InvitationResponse {
@@ -346,6 +351,7 @@ impl std::fmt::Debug for InvitationResponse {
             .field("invitation_id", &self.invitation_id)
             .field("token", &"[REDACTED]")
             .field("expires_at_ms", &self.expires_at_ms)
+            .field("role", &self.role)
             .finish()
     }
 }
@@ -457,9 +463,18 @@ mod v2_tests {
         };
         let invite = CreateInvitationRequest {
             pin: "second-pin-that-must-not-leak".to_owned(),
+            role: DeviceRole::Controlled,
         };
         assert!(!format!("{create:?}").contains("pin-that-must-not-leak"));
         assert!(!format!("{invite:?}").contains("second-pin-that-must-not-leak"));
+    }
+
+    #[test]
+    fn legacy_invitation_without_role_defaults_to_controlled() {
+        let request: CreateInvitationRequest =
+            serde_json::from_str(r#"{"pin":"123456"}"#).expect("deserialize legacy request");
+
+        assert_eq!(request.role, DeviceRole::Controlled);
     }
 
     #[test]

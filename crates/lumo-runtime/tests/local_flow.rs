@@ -30,15 +30,17 @@ fn controller_controlled_and_debug_share_an_encrypted_local_state() {
         SqliteRepository::open(directory.path()).expect("controlled repository"),
         controlled_clock,
     );
-    controlled
-        .report_location(ReportLocationInput {
-            latitude: 40.4191,
-            longitude: -3.7072,
-            accuracy_m: 7.0,
-            battery_percent: 71,
-            captured_at_ms: None,
-        })
-        .expect("location report");
+    for captured_at_ms in 3_000..3_003 {
+        controlled
+            .report_location(ReportLocationInput {
+                latitude: 40.4191,
+                longitude: -3.7072,
+                accuracy_m: 7.0,
+                battery_percent: 71,
+                captured_at_ms: Some(captured_at_ms),
+            })
+            .expect("location report");
+    }
     controlled.send_help().expect("help event");
 
     let snapshot = controller

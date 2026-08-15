@@ -28,19 +28,22 @@ fn all_three_binaries_complete_a_shared_local_flow() {
         directory.path(),
         &["setup"],
     );
-    let report = run_json(
-        env!("CARGO_BIN_EXE_lumo-controlled"),
-        directory.path(),
-        &[
-            "report",
-            "--latitude",
-            "40.4191",
-            "--longitude",
-            "-3.7072",
-            "--battery",
-            "65",
-        ],
-    );
+    let mut report = Value::Null;
+    for _ in 0..3 {
+        report = run_json(
+            env!("CARGO_BIN_EXE_lumo-controlled"),
+            directory.path(),
+            &[
+                "report",
+                "--latitude",
+                "40.4191",
+                "--longitude",
+                "-3.7072",
+                "--battery",
+                "65",
+            ],
+        );
+    }
     assert!(report["controlled"]["lastLocation"].is_object());
 
     let controller = run_json(

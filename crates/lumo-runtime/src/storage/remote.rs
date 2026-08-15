@@ -44,7 +44,7 @@ use crate::{
     storage::ControlledOperationPort,
 };
 
-const MAX_TRANSPORT_ATTEMPTS: usize = 3;
+const MAX_TRANSPORT_ATTEMPTS: usize = 4;
 const CACHE_VERSION: u8 = 2;
 const CACHE_FILE_NAME: &str = "remote-state-cache.json";
 const PENDING_OPERATION_VERSION: u8 = 1;
@@ -229,7 +229,7 @@ impl RemoteRepository {
         };
         let response: DeviceCredentialResponse =
             self.public_json(Method::POST, GROUPS_PATH, &request, true)?;
-        let credential = self.credential_from_response(response, DeviceRole::Controller)?;
+        let credential = self.credential_from_response(response, Some(DeviceRole::Controller))?;
         self.install_credential(credential.clone())?;
         Ok(credential)
     }
@@ -256,12 +256,12 @@ impl RemoteRepository {
             &request,
             true,
         )?;
-        let credential = self.credential_from_response(response, DeviceRole::Controlled)?;
+        let credential = self.credential_from_response(response, None)?;
         self.install_credential(credential.clone())?;
         Ok(credential)
     }
 
-    pub fn create_invitation(&self, pin: &str) -> LumoResult<InvitationResponse> {
+    pub fn create_invitation(&self, pin: &str, role: DeviceRole) -> LumoResult<InvitationResponse> {
         let context = self.context()?;
         ensure_role(&context.credential, DeviceRole::Controller)?;
         self.authenticated_json(
@@ -270,6 +270,7 @@ impl RemoteRepository {
             &group_invitations_path(context.credential.group_id()),
             &CreateInvitationRequest {
                 pin: pin.to_owned(),
+                role,
             },
             false,
         )
@@ -464,9 +465,9 @@ impl RemoteRepository {
     fn credential_from_response(
         &self,
         response: DeviceCredentialResponse,
-        expected_role: DeviceRole,
+        expected_role: Option<DeviceRole>,
     ) -> LumoResult<DeviceCredential> {
-        if response.role != expected_role {
+        if expected_role.is_some_and(|expected| response.role != expected) {
             return Err(LumoError::AuthenticationFailed);
         }
         DeviceCredential::from_parts(
@@ -1064,8 +1065,8 @@ fn shared_client(allow_insecure_http: bool) -> LumoResult<Client> {
 
 fn build_client(allow_insecure_http: bool) -> Result<Client, reqwest::Error> {
     Client::builder()
-        .connect_timeout(Duration::from_secs(4))
-        .timeout(Duration::from_secs(8))
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(6))
         .pool_idle_timeout(Duration::from_secs(45))
         .pool_max_idle_per_host(4)
         .tcp_keepalive(Duration::from_secs(30))
@@ -1186,18 +1187,22 @@ fn is_transient_transport_error(error: &reqwest::Error) -> bool {
 }
 
 fn is_transient_status(status: StatusCode) -> bool {
-    matches!(
-        status,
-        StatusCode::REQUEST_TIMEOUT
-            | StatusCode::TOO_MANY_REQUESTS
-            | StatusCode::BAD_GATEWAY
-            | StatusCode::SERVICE_UNAVAILABLE
-            | StatusCode::GATEWAY_TIMEOUT
-    )
+    status.is_server_error()
+        || matches!(
+            status,
+            StatusCode::REQUEST_TIMEOUT | StatusCode::TOO_MANY_REQUESTS
+        )
 }
 
 fn retry_delay(attempt: usize) {
-    thread::sleep(Duration::from_millis(if attempt == 0 { 100 } else { 250 }));
+    let base_ms = match attempt {
+        0 => 150,
+        1 => 450,
+        _ => 1_200,
+    };
+    let mut random = [0_u8; 1];
+    OsRng.fill_bytes(&mut random);
+    thread::sleep(Duration::from_millis(base_ms + u64::from(random[0])));
 }
 
 fn transport_error(error: reqwest::Error) -> LumoError {
@@ -1403,7 +1408,7 @@ mod tests {
             Err(LumoError::AuthenticationFailed)
         ));
         assert!(matches!(
-            repository.create_invitation("123456"),
+            repository.create_invitation("123456", DeviceRole::Controlled),
             Err(LumoError::AuthenticationFailed)
         ));
     }
