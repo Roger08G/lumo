@@ -100,6 +100,7 @@ export interface MobileRuntimeStatus {
     locationServicesEnabled: boolean;
     controllerNotificationsConfigured: boolean;
     controllerNotificationsEnabled: boolean;
+    fullScreenAlerts: "granted" | "denied" | "notRequired";
 }
 
 export interface LumoState {
@@ -137,7 +138,7 @@ export interface BackendHydration {
 }
 
 export type DebugScenario =
-    "home" | "supermarket" | "medical" | "away" | "offline" | "permission" | "battery";
+    "home" | "supermarket" | "medical" | "away" | "offline" | "permission" | "battery" | "help";
 
 export type LumoAction =
     | { type: "ENTER_GROUP"; payload: GroupEntryPayload }

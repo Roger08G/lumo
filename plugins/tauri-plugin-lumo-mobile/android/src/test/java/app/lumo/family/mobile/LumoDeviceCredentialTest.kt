@@ -90,6 +90,10 @@ class LumoDeviceCredentialTest {
             projectDir.resolve("src/main/res/xml/lumo_data_extraction_rules.xml").readText()
 
         assertTrue(manifest.contains("android:allowBackup=\"false\""))
+        assertTrue(manifest.contains("android.permission.USE_FULL_SCREEN_INTENT"))
+        assertTrue(manifest.contains("android:name=\".LumoAlarmActivity\""))
+        assertTrue(manifest.contains("android:showWhenLocked=\"true\""))
+        assertTrue(manifest.contains("android:turnScreenOn=\"true\""))
         assertTrue(manifest.contains("android:fullBackupContent=\"@xml/lumo_backup_rules\""))
         assertTrue(
             manifest.contains(

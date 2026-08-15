@@ -16,6 +16,14 @@
         android:allowBackup="false"
         android:dataExtractionRules="@xml/lumo_data_extraction_rules"
         android:fullBackupContent="@xml/lumo_backup_rules">
+        <activity
+            android:name=".LumoAlarmActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:turnScreenOn="true" />
         <service
             android:name=".LumoLocationService"
             android:exported="false"

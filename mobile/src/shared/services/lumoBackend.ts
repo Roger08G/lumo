@@ -568,9 +568,21 @@ export const lumoBackend = {
         return true;
     },
 
-    async startEmergencyAlarm(id: string, title: string, body: string, phone?: string) {
+    async startEmergencyAlarm(
+        id: string,
+        title: string,
+        body: string,
+        details: {
+            phone?: string;
+            address?: string;
+            latitude?: number;
+            longitude?: number;
+        } = {},
+    ) {
         if (!isMobileNative()) return false;
-        await nativeInvoke("mobile_start_emergency_alarm", { id, title, body, phone });
+        await nativeInvoke("mobile_start_emergency_alarm", {
+            alarm: { id, title, body, ...details },
+        });
         return true;
     },
 
@@ -581,6 +593,9 @@ export const lumoBackend = {
             title: string;
             body: string;
             phone: string | null;
+            address: string | null;
+            latitude: number | null;
+            longitude: number | null;
         }>("mobile_get_pending_alarm");
     },
 

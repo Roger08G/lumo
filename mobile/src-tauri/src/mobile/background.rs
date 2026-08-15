@@ -30,6 +30,8 @@ struct BackgroundTick {
     battery_optimization_disabled: bool,
     location: Option<BackgroundLocation>,
     device_credential: Option<StoredDeviceCredential>,
+    #[serde(default)]
+    acknowledge_alarm_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,6 +58,9 @@ struct BackgroundNotification {
     body: String,
     urgent: bool,
     phone: Option<String>,
+    address: Option<String>,
+    latitude: Option<f64>,
+    longitude: Option<f64>,
 }
 
 #[no_mangle]
@@ -203,6 +208,24 @@ fn process_tick(payload: String) -> Result<String, BackgroundFailure> {
             .map_err(background_runtime_error)?
     };
 
+    if profile == RuntimeProfile::Controller {
+        if let Some(alarm_id) = tick
+            .acknowledge_alarm_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            let is_pending_help = snapshot.events.iter().any(|event| {
+                event.id == alarm_id && event.kind == EventKind::Help && event.read_at_ms.is_none()
+            });
+            if is_pending_help {
+                snapshot = backend
+                    .mark_events_read()
+                    .map_err(background_runtime_error)?;
+            }
+        }
+    }
+
     if profile == RuntimeProfile::Controller
         && snapshot.controlled.connectivity == Connectivity::Online
         && snapshot
@@ -220,6 +243,19 @@ fn process_tick(payload: String) -> Result<String, BackgroundFailure> {
         .as_ref()
         .map(|session| session.tracked_person_phone.clone())
         .filter(|phone| !phone.trim().is_empty());
+    let help_location = snapshot.controlled.last_location.as_ref().map(|location| {
+        (
+            location.latitude,
+            location.longitude,
+            snapshot
+                .controlled
+                .current_place_id
+                .as_deref()
+                .and_then(|place_id| snapshot.places.iter().find(|place| place.id == place_id))
+                .map(|place| place.address.trim().to_owned())
+                .filter(|address| !address.is_empty()),
+        )
+    });
     let notifications = if profile == RuntimeProfile::Controller {
         snapshot
             .events
@@ -241,7 +277,24 @@ fn process_tick(payload: String) -> Result<String, BackgroundFailure> {
                     title: event.title,
                     body: event.detail,
                     urgent,
-                    phone: urgent.then(|| help_phone.clone()).flatten(),
+                    phone: if urgent { help_phone.clone() } else { None },
+                    address: if urgent {
+                        help_location
+                            .as_ref()
+                            .and_then(|(_, _, address)| address.clone())
+                    } else {
+                        None
+                    },
+                    latitude: if urgent {
+                        help_location.as_ref().map(|(latitude, _, _)| *latitude)
+                    } else {
+                        None
+                    },
+                    longitude: if urgent {
+                        help_location.as_ref().map(|(_, longitude, _)| *longitude)
+                    } else {
+                        None
+                    },
                 }
             })
             .collect()

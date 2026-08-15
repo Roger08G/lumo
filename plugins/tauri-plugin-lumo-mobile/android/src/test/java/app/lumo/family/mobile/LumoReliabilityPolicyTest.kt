@@ -144,6 +144,14 @@ class LumoReliabilityPolicyTest {
         )
     }
 
+    @Test
+    fun emergencyGestureRequiresOneDeliberateCompleteSwipe() {
+        assertFalse(LumoAlarmGesturePolicy.completes(Float.NaN))
+        assertFalse(LumoAlarmGesturePolicy.completes(.81f))
+        assertTrue(LumoAlarmGesturePolicy.completes(.82f))
+        assertTrue(LumoAlarmGesturePolicy.completes(1f))
+    }
+
     private fun controlledRestartAction(
         enabled: Boolean = true,
         notificationsGranted: Boolean = true,

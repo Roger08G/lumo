@@ -11,4 +11,17 @@
     <string name="lumo_reopen_body">Android necesita que abras la aplicación después del reinicio</string>
     <string name="lumo_repair_title">Vuelve a emparejar este dispositivo</string>
     <string name="lumo_repair_body">La credencial de Lumo ya no es válida</string>
+    <string name="lumo_alarm_eyebrow">LUMO · ALERTA FAMILIAR</string>
+    <string name="lumo_alarm_needs_help">Necesita ayuda</string>
+    <string name="lumo_alarm_stopped">Alarma detenida</string>
+    <string name="lumo_alarm_next_action">¿Qué quieres hacer ahora?</string>
+    <string name="lumo_alarm_call">Llamar ahora</string>
+    <string name="lumo_alarm_locate">Localizar en el mapa</string>
+    <string name="lumo_alarm_close">Cerrar</string>
+    <string name="lumo_alarm_swipe_description">Desliza completamente para detener la alarma</string>
+    <string name="lumo_alarm_swipe_label">Desliza para detener</string>
+    <string name="lumo_alarm_map_label">Ubicación actual</string>
+    <string name="lumo_alarm_address_exact">Dirección exacta\n%1$s</string>
+    <string name="lumo_alarm_address_loading">Obteniendo dirección exacta…\n%1$s</string>
+    <string name="lumo_alarm_address_unavailable">La ubicación exacta todavía no está disponible</string>
 </resources>
