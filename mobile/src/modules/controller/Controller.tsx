@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent } from "react";
 import { css, keyframes } from "@emotion/react";
 import {
     FiActivity,
@@ -353,23 +353,177 @@ interface ActiveAlarm {
     id: string;
     title: string;
     detail: string;
+    address?: string;
+    latitude?: number;
+    longitude?: number;
+}
+
+function SwipeToConfirm({ onComplete, disabled }: { onComplete: () => void; disabled?: boolean }) {
+    const trackRef = useRef<HTMLDivElement>(null);
+    const draggingRef = useRef(false);
+    const completedRef = useRef(false);
+    const progressRef = useRef(0);
+    const [progress, setProgress] = useState(0);
+
+    const update = (clientX: number) => {
+        const track = trackRef.current;
+        if (!track) return;
+        const bounds = track.getBoundingClientRect();
+        const thumb = 58;
+        const next = Math.max(
+            0,
+            Math.min(1, (clientX - bounds.left - thumb / 2) / (bounds.width - thumb)),
+        );
+        progressRef.current = next;
+        setProgress(next);
+    };
+
+    const finish = () => {
+        if (!draggingRef.current || completedRef.current) return;
+        draggingRef.current = false;
+        if (progressRef.current >= 0.84) {
+            completedRef.current = true;
+            progressRef.current = 1;
+            setProgress(1);
+            window.navigator.vibrate?.(45);
+            onComplete();
+            return;
+        }
+        progressRef.current = 0;
+        setProgress(0);
+    };
+
+    const start = (event: PointerEvent<HTMLDivElement>) => {
+        if (disabled || completedRef.current) return;
+        draggingRef.current = true;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        update(event.clientX);
+    };
+
+    return (
+        <div
+            ref={trackRef}
+            role="slider"
+            aria-label="Desliza completamente para detener la alarma"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(progress * 100)}
+            tabIndex={0}
+            onPointerDown={start}
+            onPointerMove={(event) => draggingRef.current && update(event.clientX)}
+            onPointerUp={finish}
+            onPointerCancel={finish}
+            onKeyDown={(event) => {
+                if (disabled || completedRef.current || event.key !== "ArrowRight") return;
+                event.preventDefault();
+                const next = Math.min(1, progressRef.current + 0.2);
+                progressRef.current = next;
+                setProgress(next);
+                if (next === 1) {
+                    completedRef.current = true;
+                    onComplete();
+                }
+            }}
+            css={css({
+                position: "relative",
+                width: "100%",
+                height: 70,
+                overflow: "hidden",
+                border: "4px solid rgba(255,255,255,.7)",
+                borderRadius: 999,
+                background: "rgba(255,255,255,.94)",
+                boxShadow: "inset 0 1px 3px rgba(83,29,42,.12)",
+                cursor: disabled ? "wait" : "ew-resize",
+                touchAction: "none",
+                userSelect: "none",
+            })}
+        >
+            <span
+                aria-hidden="true"
+                css={css({
+                    position: "absolute",
+                    inset: 0,
+                    width: `${progress * 100}%`,
+                    borderRadius: 999,
+                    background: "linear-gradient(90deg, #f8dce2, #efbdc8)",
+                    transition: draggingRef.current ? "none" : "width .22s ease",
+                })}
+            />
+            <strong
+                css={css({
+                    position: "absolute",
+                    inset: 0,
+                    display: "grid",
+                    placeItems: "center",
+                    paddingLeft: 54,
+                    color: "#76545c",
+                    fontSize: 14,
+                    opacity: progress > 0.58 ? 0 : 1,
+                    transition: "opacity .15s ease",
+                })}
+            >
+                Desliza para detener
+            </strong>
+            <span
+                aria-hidden="true"
+                css={css({
+                    position: "absolute",
+                    top: 2,
+                    left: 2,
+                    width: 58,
+                    height: 58,
+                    display: "grid",
+                    placeItems: "center",
+                    borderRadius: "50%",
+                    color: "#fff",
+                    background: "var(--lumo-danger)",
+                    boxShadow: "0 7px 18px rgba(125,38,56,.3)",
+                    transition: draggingRef.current ? "none" : "left .22s ease",
+                })}
+                style={{ left: `calc(${progress * 100}% - ${progress * 58}px + 2px)` }}
+            >
+                <FiChevronRight size={26} strokeWidth={3} />
+            </span>
+        </div>
+    );
 }
 
 function EmergencyAlarmOverlay({
     alarm,
+    address,
+    locating,
     onStop,
     onCall,
+    onLocate,
+    onClose,
 }: {
     alarm: ActiveAlarm;
-    onStop: () => void;
+    address: string;
+    locating: boolean;
+    onStop: () => Promise<void>;
     onCall: () => void;
+    onLocate: () => void;
+    onClose: () => void;
 }) {
-    const [progress, setProgress] = useState(0);
-    const release = (value: number) => {
-        if (value >= 90) {
-            onStop();
-        } else {
-            setProgress(0);
+    const [acknowledged, setAcknowledged] = useState(false);
+    const [stopping, setStopping] = useState(false);
+
+    useEffect(() => {
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        return () => {
+            document.body.style.overflow = previousOverflow;
+        };
+    }, []);
+
+    const stop = async () => {
+        if (stopping || acknowledged) return;
+        setStopping(true);
+        try {
+            await onStop();
+            setAcknowledged(true);
+        } finally {
+            setStopping(false);
         }
     };
 
@@ -430,55 +584,59 @@ function EmergencyAlarmOverlay({
                         {alarm.detail}
                     </p>
                 </div>
-                <Button variant="secondary" fullWidth icon={FiPhone} onClick={onCall}>
-                    Llamar ahora
-                </Button>
-                <label
+                <div
                     css={css({
                         width: "100%",
                         display: "grid",
-                        gap: 8,
-                        padding: "12px 14px 14px",
+                        gap: 5,
+                        padding: "15px 16px",
                         borderRadius: 20,
                         color: "var(--lumo-text)",
                         background: "rgba(255,255,255,.96)",
                     })}
                 >
-                    <span css={css({ fontSize: 11, textAlign: "center" })}>
-                        Desliza para detener la alarma
-                    </span>
-                    <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={progress}
-                        aria-label="Deslizar para detener la alarma"
-                        onChange={(event) => setProgress(event.currentTarget.valueAsNumber)}
-                        onPointerUp={(event) => release(event.currentTarget.valueAsNumber)}
-                        onKeyUp={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                                release(event.currentTarget.valueAsNumber);
-                            }
-                        }}
+                    <span
                         css={css({
-                            width: "100%",
-                            height: 42,
-                            appearance: "none",
-                            borderRadius: 999,
-                            background: `linear-gradient(90deg, var(--lumo-danger) ${progress}%, #eee8ec ${progress}%)`,
-                            cursor: "ew-resize",
-                            "&::-webkit-slider-thumb": {
-                                width: 36,
-                                height: 36,
-                                appearance: "none",
-                                border: "4px solid #fff",
-                                borderRadius: "50%",
-                                background: "var(--lumo-danger)",
-                                boxShadow: "0 4px 12px rgba(125,38,56,.28)",
-                            },
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            color: "var(--lumo-danger)",
+                            fontSize: 11,
                         })}
-                    />
-                </label>
+                    >
+                        <FiMapPin /> DIRECCIÓN ACTUAL
+                    </span>
+                    <strong css={css({ fontSize: 14, lineHeight: 1.45 })}>{address}</strong>
+                </div>
+                {acknowledged ? (
+                    <div css={css({ width: "100%", display: "grid", gap: 10 })}>
+                        <p
+                            css={css({
+                                fontSize: 13,
+                                textAlign: "center",
+                                color: "rgba(255,255,255,.88)",
+                            })}
+                        >
+                            Alarma detenida. Elige cómo ayudar.
+                        </p>
+                        <Button variant="secondary" fullWidth icon={FiPhone} onClick={onCall}>
+                            Llamar ahora
+                        </Button>
+                        <Button fullWidth icon={FiCrosshair} loading={locating} onClick={onLocate}>
+                            {locating ? "Localizando…" : "Localizar ahora"}
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            fullWidth
+                            onClick={onClose}
+                            css={css({ color: "#fff" })}
+                        >
+                            Cerrar
+                        </Button>
+                    </div>
+                ) : (
+                    <SwipeToConfirm onComplete={() => void stop()} disabled={stopping} />
+                )}
             </section>
         </div>
     );
@@ -975,6 +1133,67 @@ function SettingsView({
                         }
                     }}
                 />
+                {state.mobile?.fullScreenAlerts === "denied" && (
+                    <div
+                        css={css({
+                            display: "grid",
+                            gap: 9,
+                            margin: "2px 0 12px",
+                            padding: 12,
+                            borderRadius: 15,
+                            color: "var(--lumo-danger)",
+                            background: "var(--lumo-danger-soft)",
+                        })}
+                    >
+                        <span
+                            css={css({
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 7,
+                                fontSize: 12,
+                                fontWeight: 650,
+                            })}
+                        >
+                            <FiBell /> Alarmas con la pantalla bloqueada
+                        </span>
+                        <p
+                            css={css({
+                                color: "var(--lumo-text-secondary)",
+                                fontSize: 11,
+                                lineHeight: 1.45,
+                            })}
+                        >
+                            Android necesita este permiso especial para encender la pantalla cuando
+                            alguien pide ayuda.
+                        </p>
+                        <Button
+                            variant="secondary"
+                            fullWidth
+                            onClick={async () => {
+                                try {
+                                    const status =
+                                        await backend.requestMobilePermissions("controller");
+                                    if (status)
+                                        dispatch({ type: "SYNC_MOBILE_STATUS", payload: status });
+                                    onToast({
+                                        title: "Ajuste abierto",
+                                        detail: "Permite las alarmas a pantalla completa para Lumo",
+                                    });
+                                } catch (requestError) {
+                                    onToast({
+                                        title: "No se ha podido abrir el ajuste",
+                                        detail:
+                                            requestError instanceof Error
+                                                ? requestError.message
+                                                : undefined,
+                                    });
+                                }
+                            }}
+                        >
+                            Activar alarma en pantalla
+                        </Button>
+                    </div>
+                )}
                 <div css={css({ height: 1, background: "var(--lumo-border)" })} />
                 <Toggle
                     label="Conexión del tracker"
@@ -1431,6 +1650,29 @@ export function Controller() {
         () => state.events.filter((event) => !event.read).length,
         [state.events],
     );
+    const alarmAddress = useMemo(() => {
+        if (state.demo.address) return state.demo.address;
+        if (activeAlarm?.address) return activeAlarm.address;
+        const currentPlace = state.places.find(
+            (place) =>
+                place.id === state.demo.location ||
+                place.name.localeCompare(state.demo.placeName, undefined, {
+                    sensitivity: "base",
+                }) === 0,
+        );
+        if (currentPlace?.address) return currentPlace.address;
+        if (state.demo.coordinates) return `Coordenadas exactas: ${state.demo.coordinates}`;
+        if (activeAlarm?.latitude != null && activeAlarm.longitude != null) {
+            return `Coordenadas exactas: ${activeAlarm.latitude.toFixed(6)}, ${activeAlarm.longitude.toFixed(6)}`;
+        }
+        return "Solicitando la dirección exacta…";
+    }, [
+        activeAlarm,
+        state.demo.address,
+        state.demo.coordinates,
+        state.demo.location,
+        state.places,
+    ]);
 
     useEffect(() => {
         const coordinateText = state.demo.coordinates;
@@ -1474,7 +1716,14 @@ export function Controller() {
             .getPendingEmergencyAlarm()
             .then((alarm) => {
                 if (alarm) {
-                    setActiveAlarm({ id: alarm.id, title: alarm.title, detail: alarm.body });
+                    setActiveAlarm({
+                        id: alarm.id,
+                        title: alarm.title,
+                        detail: alarm.body,
+                        address: alarm.address ?? undefined,
+                        latitude: alarm.latitude ?? undefined,
+                        longitude: alarm.longitude ?? undefined,
+                    });
                 }
             })
             .catch(() => undefined);
@@ -1545,7 +1794,6 @@ export function Controller() {
     };
 
     const stopAlarm = async () => {
-        setActiveAlarm(null);
         await backend.stopEmergencyAlarm().catch(() => false);
         const snapshot = await backend.markEventsRead().catch(() => null);
         dispatch(
@@ -1744,9 +1992,14 @@ export function Controller() {
             )}
             {activeAlarm && (
                 <EmergencyAlarmOverlay
+                    key={activeAlarm.id}
                     alarm={activeAlarm}
-                    onStop={() => void stopAlarm()}
+                    address={alarmAddress}
+                    locating={locating}
+                    onStop={stopAlarm}
                     onCall={() => void callTrackedPerson()}
+                    onLocate={() => void locate()}
+                    onClose={() => setActiveAlarm(null)}
                 />
             )}
         </main>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useReducer, useRef, type ReactNode } from "react";
 
 import { LumoContext } from "@app/state/lumoContext.ts";
 import { lumoBackend } from "@shared/services/lumoBackend.ts";
+import { parseCoordinates } from "@shared/utils/coordinates.ts";
 
 import type {
     DebugScenario,
@@ -383,6 +384,16 @@ function applyScenario(state: LumoState, scenario: DebugScenario): LumoState {
                     battery: 12,
                 },
             );
+        case "help":
+            return withEvent(
+                state,
+                createEvent(
+                    "help",
+                    `${state.group.trackedPersonName || "La persona acompañada"} necesita ayuda`,
+                    "Ha solicitado que contactes cuanto antes",
+                ),
+                base,
+            );
     }
 }
 
@@ -749,12 +760,21 @@ export function LumoProvider({ children }: { children: ReactNode }) {
         state.events.forEach((event) => known.add(event.id));
         fresh.forEach((event) => {
             if (event.kind === "help") {
-                void lumoBackend.startEmergencyAlarm(
-                    event.id,
-                    event.title,
-                    event.detail,
-                    state.group.trackedPersonPhone,
-                );
+                void lumoBackend.startEmergencyAlarm(event.id, event.title, event.detail, {
+                    phone: state.group.trackedPersonPhone,
+                    address: state.demo.address || undefined,
+                    ...(() => {
+                        const coordinates = state.demo.coordinates
+                            ? parseCoordinates(state.demo.coordinates)
+                            : null;
+                        return coordinates
+                            ? {
+                                  latitude: coordinates.latitude,
+                                  longitude: coordinates.longitude,
+                              }
+                            : {};
+                    })(),
+                });
             } else {
                 void lumoBackend.showNotification(event.title, event.detail, {
                     id: event.id,
@@ -762,7 +782,14 @@ export function LumoProvider({ children }: { children: ReactNode }) {
                 });
             }
         });
-    }, [state.events, state.group.trackedPersonPhone, state.mode, state.preferences.notifications]);
+    }, [
+        state.demo.address,
+        state.demo.coordinates,
+        state.events,
+        state.group.trackedPersonPhone,
+        state.mode,
+        state.preferences.notifications,
+    ]);
 
     const value = useMemo(() => ({ state, dispatch, backend: lumoBackend }), [state]);
 

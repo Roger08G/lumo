@@ -8,6 +8,7 @@ import {
     FiCloudOff,
     FiCrosshair,
     FiHome,
+    FiHeart,
     FiMapPin,
     FiRefreshCw,
     FiShieldOff,
@@ -73,6 +74,13 @@ const SCENARIOS: ScenarioOption[] = [
         title: "Batería baja",
         detail: "Cambiar al 12 %",
         icon: FiBattery,
+        tone: "amber",
+    },
+    {
+        id: "help",
+        title: "Necesito ayuda",
+        detail: "Probar la alarma familiar",
+        icon: FiHeart,
         tone: "amber",
     },
 ];

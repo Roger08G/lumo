@@ -18,6 +18,7 @@ pub struct MobileStatus {
     pub location_services_enabled: bool,
     pub controller_notifications_configured: bool,
     pub controller_notifications_enabled: bool,
+    pub full_screen_alerts: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -97,14 +98,6 @@ pub(crate) struct NotificationPayload<'a> {
     pub urgent: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct EmergencyAlarmPayload<'a> {
-    pub id: &'a str,
-    pub title: &'a str,
-    pub body: &'a str,
-    pub phone: Option<&'a str>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingAlarm {
@@ -112,6 +105,9 @@ pub struct PendingAlarm {
     pub title: String,
     pub body: String,
     pub phone: Option<String>,
+    pub address: Option<String>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -171,10 +167,12 @@ mod tests {
             location_services_enabled: true,
             controller_notifications_configured: true,
             controller_notifications_enabled: false,
+            full_screen_alerts: "granted".to_owned(),
         })
         .expect("mobile status JSON");
 
         assert_eq!(value["controllerNotificationsConfigured"], true);
         assert_eq!(value["controllerNotificationsEnabled"], false);
+        assert_eq!(value["fullScreenAlerts"], "granted");
     }
 }

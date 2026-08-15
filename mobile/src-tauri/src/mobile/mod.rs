@@ -121,20 +121,38 @@ pub fn mobile_show_notification(
 pub fn mobile_start_emergency_alarm(
     app: AppHandle,
     state: State<'_, BackendState>,
-    id: String,
-    title: String,
-    body: String,
-    phone: Option<String>,
+    alarm: PendingAlarm,
 ) -> CommandResult<()> {
     state.1.require_controller()?;
-    if id.trim().is_empty() || title.trim().is_empty() || body.trim().is_empty() {
+    if alarm.id.trim().is_empty() || alarm.title.trim().is_empty() || alarm.body.trim().is_empty() {
         return Err(CommandError {
             code: "invalid_input",
             message: "invalid emergency alarm".to_owned(),
         });
     }
+    let coordinates_valid = match (alarm.latitude, alarm.longitude) {
+        (None, None) => true,
+        (Some(latitude), Some(longitude)) => {
+            latitude.is_finite()
+                && (-90.0..=90.0).contains(&latitude)
+                && longitude.is_finite()
+                && (-180.0..=180.0).contains(&longitude)
+        }
+        _ => false,
+    };
+    if !coordinates_valid
+        || alarm
+            .address
+            .as_ref()
+            .is_some_and(|value| value.len() > 240)
+    {
+        return Err(CommandError {
+            code: "invalid_input",
+            message: "invalid emergency location".to_owned(),
+        });
+    }
     app.lumo_mobile()
-        .start_emergency_alarm(&id, &title, &body, phone.as_deref())
+        .start_emergency_alarm(&alarm)
         .map_err(bridge_error)
 }
 

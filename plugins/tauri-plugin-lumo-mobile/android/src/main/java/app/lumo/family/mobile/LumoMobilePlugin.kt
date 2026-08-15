@@ -62,6 +62,9 @@ class EmergencyAlarmArgs {
     lateinit var title: String
     lateinit var body: String
     var phone: String? = null
+    var address: String? = null
+    var latitude: Double? = null
+    var longitude: Double? = null
 }
 
 @TauriPlugin(
@@ -165,7 +168,7 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
         LumoPreferences.clearControllerNotifications(context)
         LumoPreferences.clearControlledTrackingChoice(context)
         LumoServiceController.stop(context)
-        LumoEmergencyAlarm.stop(context)
+        LumoEmergencyAlarm.clear(context)
         if (cleared) {
             invoke.resolve()
         } else {
@@ -385,7 +388,15 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
         runCatching {
             LumoEmergencyAlarm.start(
                 activity.applicationContext,
-                LumoPendingAlarm(args.id, args.title, args.body, phone),
+                LumoPendingAlarm(
+                    id = args.id,
+                    title = args.title,
+                    body = args.body,
+                    phone = phone,
+                    address = args.address?.trim()?.take(240)?.takeIf(String::isNotEmpty),
+                    latitude = args.latitude?.takeIf { it.isFinite() && it in -90.0..90.0 },
+                    longitude = args.longitude?.takeIf { it.isFinite() && it in -180.0..180.0 },
+                ),
             )
         }.onSuccess { invoke.resolve() }
             .onFailure { invoke.reject("Android no ha podido iniciar la alarma") }
@@ -451,6 +462,24 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     private fun continueAfterNotifications(invoke: Invoke, role: String) {
+        if (
+            role == LumoServiceController.ROLE_CONTROLLER &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+                LumoDeviceStatus.fullScreenAlertsStatus(activity) == "denied"
+        ) {
+            val packageUri = Uri.fromParts("package", activity.packageName, null)
+            runCatching {
+                activity.startActivity(
+                    Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, packageUri),
+                )
+            }.onSuccess {
+                invoke.resolve(LumoDeviceStatus.snapshot(activity.applicationContext))
+            }.onFailure {
+                invoke.reject("Activa las alarmas a pantalla completa en los ajustes de Android")
+            }
+            return
+        }
+
         if (
             role != LumoServiceController.ROLE_CONTROLLED ||
                 Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||

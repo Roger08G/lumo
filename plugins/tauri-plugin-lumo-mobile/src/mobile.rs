@@ -8,9 +8,9 @@ use tauri::plugin::PluginHandle;
 use tauri::{AppHandle, Runtime};
 
 use crate::models::{
-    AddressResponse, CoordinatesPayload, CredentialLoadResponse, DeviceCredential,
-    EmergencyAlarmPayload, MobileStatus, NotificationPayload, PendingAlarm, PendingAlarmResponse,
-    PhonePayload, RolePayload, TrackingPayload,
+    AddressResponse, CoordinatesPayload, CredentialLoadResponse, DeviceCredential, MobileStatus,
+    NotificationPayload, PendingAlarm, PendingAlarmResponse, PhonePayload, RolePayload,
+    TrackingPayload,
 };
 #[cfg(not(target_os = "android"))]
 use crate::Error;
@@ -140,22 +140,8 @@ impl<R: Runtime> LumoMobile<R> {
         )
     }
 
-    pub fn start_emergency_alarm(
-        &self,
-        id: &str,
-        title: &str,
-        body: &str,
-        phone: Option<&str>,
-    ) -> Result<()> {
-        self.run(
-            "startEmergencyAlarm",
-            EmergencyAlarmPayload {
-                id,
-                title,
-                body,
-                phone,
-            },
-        )
+    pub fn start_emergency_alarm(&self, alarm: &PendingAlarm) -> Result<()> {
+        self.run("startEmergencyAlarm", alarm)
     }
 
     pub fn pending_alarm(&self) -> Result<Option<PendingAlarm>> {

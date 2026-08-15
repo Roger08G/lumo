@@ -1,6 +1,7 @@
 package app.lumo.family.mobile
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -42,6 +43,12 @@ internal object LumoDeviceStatus {
         return runtimePermissionGranted && NotificationManagerCompat.from(context).areNotificationsEnabled()
     }
 
+    fun fullScreenAlertsStatus(context: Context): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return "notRequired"
+        val manager = context.getSystemService(NotificationManager::class.java)
+        return if (manager.canUseFullScreenIntent()) "granted" else "denied"
+    }
+
     fun batteryOptimizationDisabled(context: Context): Boolean {
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
         return powerManager.isIgnoringBatteryOptimizations(context.packageName)
@@ -73,6 +80,7 @@ internal object LumoDeviceStatus {
             .put("preciseLocation", if (preciseLocationGranted(context)) "granted" else "denied")
             .put("backgroundLocation", backgroundLocationStatus(context))
             .put("notifications", if (notificationsGranted(context)) "granted" else "denied")
+            .put("fullScreenAlerts", fullScreenAlertsStatus(context))
             .put(
                 "controllerNotificationsConfigured",
                 LumoPreferences.controllerNotificationsConfigured(context),

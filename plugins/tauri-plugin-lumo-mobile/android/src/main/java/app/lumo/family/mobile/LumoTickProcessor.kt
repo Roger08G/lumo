@@ -37,6 +37,7 @@ private data class LumoBackgroundInvocation(
 internal object LumoTickProcessor {
     private const val MAX_FLUSH_PER_TICK = 8
 
+    @Synchronized
     fun process(context: Context, role: String, location: Location?) {
         val queue = LumoSecureQueue(context)
         val credential = LumoCredentialVault.load(context)
@@ -44,7 +45,14 @@ internal object LumoTickProcessor {
             disableForCredentialRepair(context, queue)
             return
         }
-        val payload = createPayload(context, role, location, credential)
+        val pendingAcknowledgement =
+            if (role == LumoServiceController.ROLE_CONTROLLER) {
+                LumoEmergencyAlarm.pendingAcknowledgement(context)
+            } else {
+                null
+            }
+        val payload =
+            createPayload(context, role, location, credential, pendingAcknowledgement)
 
         when (flushPending(context, queue, credential)) {
             LumoBackgroundResultKind.TRACKING_DISABLED -> {
@@ -59,8 +67,12 @@ internal object LumoTickProcessor {
         }
         val invocation = invoke(payload, credential)
         when (invocation.kind) {
-            LumoBackgroundResultKind.SUCCESS ->
+            LumoBackgroundResultKind.SUCCESS -> {
+                pendingAcknowledgement?.let {
+                    LumoEmergencyAlarm.completeAcknowledgement(context, it)
+                }
                 invocation.response?.let { publishNotifications(context, it) }
+            }
             LumoBackgroundResultKind.TRANSIENT_FAILURE -> {
                 if (role == LumoServiceController.ROLE_CONTROLLED && location != null) {
                     queue.enqueue(payload)
@@ -69,6 +81,20 @@ internal object LumoTickProcessor {
             LumoBackgroundResultKind.TRACKING_DISABLED -> disableTracking(context, queue)
             LumoBackgroundResultKind.CREDENTIAL_REJECTED ->
                 disableForCredentialRepair(context, queue)
+        }
+    }
+
+    fun acknowledgeEmergency(context: Context) {
+        Thread {
+            process(
+                context.applicationContext,
+                LumoServiceController.ROLE_CONTROLLER,
+                location = null,
+            )
+        }.apply {
+            name = "lumo-emergency-ack"
+            isDaemon = true
+            start()
         }
     }
 
@@ -119,6 +145,7 @@ internal object LumoTickProcessor {
         role: String,
         location: Location?,
         credential: LumoDeviceCredential,
+        acknowledgeAlarmId: String? = null,
     ): String {
         val payload =
             JSONObject()
@@ -143,6 +170,7 @@ internal object LumoTickProcessor {
                     "batteryOptimizationDisabled",
                     LumoDeviceStatus.batteryOptimizationDisabled(context),
                 )
+                .put("acknowledgeAlarmId", acknowledgeAlarmId ?: JSONObject.NULL)
         if (location != null) {
             payload.put(
                 "location",
@@ -213,6 +241,16 @@ internal object LumoTickProcessor {
             val title = notification.optString("title").takeIf(String::isNotBlank) ?: continue
             val body = notification.optString("body")
             if (notification.optBoolean("urgent", false)) {
+                val latitude =
+                    notification
+                        .takeIf { it.has("latitude") && !it.isNull("latitude") }
+                        ?.optDouble("latitude")
+                        ?.takeIf { it.isFinite() && it in -90.0..90.0 }
+                val longitude =
+                    notification
+                        .takeIf { it.has("longitude") && !it.isNull("longitude") }
+                        ?.optDouble("longitude")
+                        ?.takeIf { it.isFinite() && it in -180.0..180.0 }
                 LumoEmergencyAlarm.start(
                     context,
                     LumoPendingAlarm(
@@ -220,6 +258,9 @@ internal object LumoTickProcessor {
                         title = title,
                         body = body,
                         phone = notification.optString("phone").takeIf(String::isNotBlank),
+                        address = notification.optString("address").takeIf(String::isNotBlank),
+                        latitude = latitude,
+                        longitude = longitude,
                     ),
                 )
             } else {
