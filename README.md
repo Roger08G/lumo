@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Roger08G/lumo/main/images/lumo.png" alt="Logo de Lumo" width="190">
+  <img src="./images/lumo.png" alt="Logo de Lumo" width="190">
 </p>
 
 <h1 align="center">Lumo</h1>
