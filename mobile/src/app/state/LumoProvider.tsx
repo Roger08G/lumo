@@ -86,6 +86,8 @@ const createDefaultDemo = (): DemoState => ({
     statusText: "Está en casa",
     sinceLabel: "Desde hace 1 h 24 min",
     lastUpdatedAt: new Date().toISOString(),
+    coordinates: null,
+    address: "",
     battery: 68,
     connection: "online",
     permission: "granted",
@@ -432,7 +434,14 @@ function reducer(state: LumoState, action: LumoAction): LumoState {
                           }
                         : action.payload.group,
                 mode: action.payload.mode,
-                demo: action.payload.demo,
+                demo: {
+                    ...action.payload.demo,
+                    address:
+                        action.payload.demo.address ||
+                        (action.payload.demo.coordinates === state.demo.coordinates
+                            ? state.demo.address
+                            : ""),
+                },
                 places: action.payload.places,
                 events: recentEvents(action.payload.events),
                 preferences: {
@@ -523,6 +532,9 @@ function reducer(state: LumoState, action: LumoAction): LumoState {
             return { ...state, demo: { ...state.demo, accuracy: action.payload } };
         case "SET_DELAY":
             return { ...state, demo: { ...state.demo, delaySeconds: action.payload } };
+        case "SET_RESOLVED_ADDRESS":
+            if (state.demo.coordinates !== action.payload.coordinates) return state;
+            return { ...state, demo: { ...state.demo, address: action.payload.address } };
         case "ADD_PLACE":
             return { ...state, places: [...state.places, action.payload] };
         case "UPDATE_PLACE":
@@ -736,12 +748,21 @@ export function LumoProvider({ children }: { children: ReactNode }) {
         );
         state.events.forEach((event) => known.add(event.id));
         fresh.forEach((event) => {
-            void lumoBackend.showNotification(event.title, event.detail, {
-                id: event.id,
-                urgent: event.kind === "warning",
-            });
+            if (event.kind === "help") {
+                void lumoBackend.startEmergencyAlarm(
+                    event.id,
+                    event.title,
+                    event.detail,
+                    state.group.trackedPersonPhone,
+                );
+            } else {
+                void lumoBackend.showNotification(event.title, event.detail, {
+                    id: event.id,
+                    urgent: false,
+                });
+            }
         });
-    }, [state.events, state.mode, state.preferences.notifications]);
+    }, [state.events, state.group.trackedPersonPhone, state.mode, state.preferences.notifications]);
 
     const value = useMemo(() => ({ state, dispatch, backend: lumoBackend }), [state]);
 

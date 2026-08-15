@@ -78,6 +78,16 @@ body {
         radial-gradient(circle at 16% 8%, rgba(165, 131, 225, 0.2), transparent 28rem), #ede7f2;
 }
 
+.lumo-toast-title {
+    font-size: 14px;
+    font-weight: 650;
+}
+
+.lumo-toast-description {
+    color: var(--lumo-text-secondary) !important;
+    font-size: 12px;
+}
+
 body,
 button,
 input,

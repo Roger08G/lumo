@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { css, keyframes } from "@emotion/react";
+import { Toaster } from "sonner";
 
 import { LumoProvider } from "@app/state/LumoProvider.tsx";
 import { useLumo } from "@app/state/lumoContext.ts";
@@ -101,24 +102,49 @@ function AppContent() {
 
 function App() {
     return (
-        <LumoProvider>
-            <div
-                css={css({
-                    width: "min(100%, var(--lumo-viewport-width))",
-                    minHeight: "var(--lumo-viewport-height)",
-                    margin: "0 auto",
-                    paddingLeft: "var(--lumo-safe-left)",
-                    paddingRight: "var(--lumo-safe-right)",
-                    background: "var(--lumo-bg)",
-                    "@media (min-width: 540px)": {
-                        maxWidth: 480,
-                        boxShadow: "0 0 70px rgba(48, 35, 64, .15)",
+        <>
+            <Toaster
+                position="top-center"
+                swipeDirections={["top", "left", "right"]}
+                visibleToasts={3}
+                gap={8}
+                offset={{ top: "calc(var(--lumo-safe-top) + 10px)" }}
+                mobileOffset={{ top: "calc(var(--lumo-safe-top) + 10px)", left: 12, right: 12 }}
+                toastOptions={{
+                    style: {
+                        border: "1px solid rgba(104,66,166,.16)",
+                        borderRadius: 18,
+                        color: "var(--lumo-text)",
+                        background: "rgba(255,253,249,.97)",
+                        boxShadow: "0 16px 38px rgba(47,38,57,.14)",
+                        fontFamily: "inherit",
                     },
-                })}
-            >
-                <AppContent />
-            </div>
-        </LumoProvider>
+                    classNames: {
+                        title: "lumo-toast-title",
+                        description: "lumo-toast-description",
+                        closeButton: "lumo-toast-close",
+                    },
+                }}
+            />
+            <LumoProvider>
+                <div
+                    css={css({
+                        width: "min(100%, var(--lumo-viewport-width))",
+                        minHeight: "var(--lumo-viewport-height)",
+                        margin: "0 auto",
+                        paddingLeft: "var(--lumo-safe-left)",
+                        paddingRight: "var(--lumo-safe-right)",
+                        background: "var(--lumo-bg)",
+                        "@media (min-width: 540px)": {
+                            maxWidth: 480,
+                            boxShadow: "0 0 70px rgba(48, 35, 64, .15)",
+                        },
+                    })}
+                >
+                    <AppContent />
+                </div>
+            </LumoProvider>
+        </>
     );
 }
 
