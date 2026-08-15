@@ -66,6 +66,17 @@ internal data class LumoPendingAlarm(
             .put("longitude", longitude ?: JSONObject.NULL)
 }
 
+internal object LumoAlarmPayloadPolicy {
+    fun optionalText(value: String?): String? =
+        value
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?.takeUnless {
+                it.equals("null", ignoreCase = true) ||
+                    it.equals("undefined", ignoreCase = true)
+            }
+}
+
 internal object LumoEmergencyAlarm {
     private const val FILE = "lumo_emergency_alarm"
     private const val KEY_ID = "id"
@@ -84,9 +95,42 @@ internal object LumoEmergencyAlarm {
     const val ACTION_STOP = "app.lumo.family.mobile.ALARM_STOP"
 
     fun start(context: Context, alarm: LumoPendingAlarm) {
-        if (wasAcknowledged(context, alarm.id)) return
+        val normalized =
+            alarm.copy(
+                phone = LumoAlarmPayloadPolicy.optionalText(alarm.phone),
+                address = LumoAlarmPayloadPolicy.optionalText(alarm.address),
+            )
+        if (wasAcknowledged(context, normalized.id)) return
         val current = load(context)
-        if (current?.id == alarm.id) return
+        if (current?.id == normalized.id) {
+            val improved =
+                normalized.copy(
+                    address = current.address ?: normalized.address,
+                    latitude = current.latitude ?: normalized.latitude,
+                    longitude = current.longitude ?: normalized.longitude,
+                )
+            if (
+                improved.address != current.address ||
+                    improved.latitude != current.latitude ||
+                    improved.longitude != current.longitude
+            ) {
+                persist(context, improved)
+            }
+            startAlarmService(context)
+            return
+        }
+        persist(context, normalized)
+        startAlarmService(context)
+    }
+
+    private fun startAlarmService(context: Context) {
+        ContextCompat.startForegroundService(
+            context,
+            Intent(context, LumoAlarmService::class.java).setAction(ACTION_START),
+        )
+    }
+
+    private fun persist(context: Context, alarm: LumoPendingAlarm) {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit(commit = true) {
             putString(KEY_ID, alarm.id)
             putString(KEY_TITLE, alarm.title.take(120))
@@ -96,10 +140,6 @@ internal object LumoEmergencyAlarm {
             alarm.latitude?.let { putLong(KEY_LATITUDE, it.toBits()) } ?: remove(KEY_LATITUDE)
             alarm.longitude?.let { putLong(KEY_LONGITUDE, it.toBits()) } ?: remove(KEY_LONGITUDE)
         }
-        ContextCompat.startForegroundService(
-            context,
-            Intent(context, LumoAlarmService::class.java).setAction(ACTION_START),
-        )
     }
 
     fun acknowledge(context: Context, alarmId: String) {
@@ -147,9 +187,10 @@ internal object LumoEmergencyAlarm {
     }
 
     fun updateAddress(context: Context, alarmId: String, address: String) {
+        val normalized = LumoAlarmPayloadPolicy.optionalText(address) ?: return
         if (load(context)?.id != alarmId) return
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit(commit = true) {
-            putString(KEY_ADDRESS, address.take(240))
+            putString(KEY_ADDRESS, normalized.take(240))
         }
     }
 
@@ -169,8 +210,8 @@ internal object LumoEmergencyAlarm {
             id = id,
             title = title,
             body = values.getString(KEY_BODY, "").orEmpty(),
-            phone = values.getString(KEY_PHONE, null)?.takeIf(String::isNotBlank),
-            address = values.getString(KEY_ADDRESS, null)?.takeIf(String::isNotBlank),
+            phone = LumoAlarmPayloadPolicy.optionalText(values.getString(KEY_PHONE, null)),
+            address = LumoAlarmPayloadPolicy.optionalText(values.getString(KEY_ADDRESS, null)),
             latitude = values.takeIf { it.contains(KEY_LATITUDE) }?.getLong(KEY_LATITUDE, 0L)?.let(Double::fromBits),
             longitude = values.takeIf { it.contains(KEY_LONGITUDE) }?.getLong(KEY_LONGITUDE, 0L)?.let(Double::fromBits),
         )

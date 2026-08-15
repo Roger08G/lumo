@@ -152,6 +152,18 @@ class LumoReliabilityPolicyTest {
         assertTrue(LumoAlarmGesturePolicy.completes(1f))
     }
 
+    @Test
+    fun emergencyAddressNeverTreatsJsonNullAsVisibleText() {
+        assertEquals(null, LumoAlarmPayloadPolicy.optionalText(null))
+        assertEquals(null, LumoAlarmPayloadPolicy.optionalText(""))
+        assertEquals(null, LumoAlarmPayloadPolicy.optionalText("  null  "))
+        assertEquals(null, LumoAlarmPayloadPolicy.optionalText("UNDEFINED"))
+        assertEquals(
+            "Calle Mayor, 1",
+            LumoAlarmPayloadPolicy.optionalText("  Calle Mayor, 1  "),
+        )
+    }
+
     private fun controlledRestartAction(
         enabled: Boolean = true,
         notificationsGranted: Boolean = true,
