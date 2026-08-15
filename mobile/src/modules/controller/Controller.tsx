@@ -274,15 +274,33 @@ function MockMap() {
                 </span>
                 <span
                     css={css({
-                        padding: "5px 9px",
+                        maxWidth: 220,
+                        display: "grid",
+                        gap: 2,
+                        padding: "6px 10px",
                         borderRadius: 9,
                         color: "var(--lumo-text)",
                         background: "rgba(255,255,255,.94)",
                         boxShadow: "0 4px 12px rgba(47,38,57,.12)",
                         fontSize: 10,
+                        textAlign: "center",
                     })}
                 >
-                    {state.demo.placeName}
+                    <strong>{state.demo.placeName}</strong>
+                    {state.demo.location === "away" &&
+                        (state.demo.address || state.demo.coordinates) && (
+                            <span
+                                css={css({
+                                    overflow: "hidden",
+                                    color: "var(--lumo-text-secondary)",
+                                    fontSize: 9,
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                })}
+                            >
+                                {state.demo.address || state.demo.coordinates}
+                            </span>
+                        )}
                 </span>
             </div>
             <span
@@ -327,8 +345,144 @@ const eventIcons: Record<EventKind, IconType> = {
     departure: FiNavigation,
     location: FiCrosshair,
     warning: FiAlertTriangle,
+    help: FiHeart,
     system: FiShield,
 };
+
+interface ActiveAlarm {
+    id: string;
+    title: string;
+    detail: string;
+}
+
+function EmergencyAlarmOverlay({
+    alarm,
+    onStop,
+    onCall,
+}: {
+    alarm: ActiveAlarm;
+    onStop: () => void;
+    onCall: () => void;
+}) {
+    const [progress, setProgress] = useState(0);
+    const release = (value: number) => {
+        if (value >= 90) {
+            onStop();
+        } else {
+            setProgress(0);
+        }
+    };
+
+    return (
+        <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="lumo-alarm-title"
+            css={css({
+                position: "fixed",
+                zIndex: 120,
+                inset: 0,
+                display: "grid",
+                alignContent: "center",
+                padding:
+                    "max(22px, var(--lumo-safe-top)) max(18px, var(--lumo-safe-right)) max(22px, var(--lumo-safe-bottom)) max(18px, var(--lumo-safe-left))",
+                background:
+                    "radial-gradient(circle at 50% 36%, rgba(255,255,255,.24), transparent 30%), linear-gradient(160deg, #d9697c, #a83d52)",
+            })}
+        >
+            <section
+                css={css({
+                    width: "min(100%, 430px)",
+                    display: "grid",
+                    justifyItems: "center",
+                    gap: 18,
+                    margin: "0 auto",
+                    padding: "28px 22px 22px",
+                    border: "1px solid rgba(255,255,255,.42)",
+                    borderRadius: 30,
+                    color: "#fff",
+                    background: "rgba(111,31,48,.28)",
+                    boxShadow: "0 28px 70px rgba(75,15,29,.34)",
+                    backdropFilter: "blur(18px)",
+                })}
+            >
+                <span
+                    css={css({
+                        width: 74,
+                        height: 74,
+                        display: "grid",
+                        placeItems: "center",
+                        borderRadius: 26,
+                        color: "#b73f56",
+                        background: "#fff1f3",
+                        boxShadow: "0 0 0 12px rgba(255,255,255,.12)",
+                        animation: `${pulse} 1.5s ease-out infinite`,
+                    })}
+                >
+                    <FiHeart size={34} fill="currentColor" />
+                </span>
+                <div css={css({ display: "grid", gap: 7, textAlign: "center" })}>
+                    <span css={css({ fontSize: 11, letterSpacing: ".12em" })}>ALERTA DE AYUDA</span>
+                    <h2 id="lumo-alarm-title" css={css({ fontSize: 27, letterSpacing: "-.04em" })}>
+                        {alarm.title}
+                    </h2>
+                    <p css={css({ color: "rgba(255,255,255,.86)", fontSize: 14, lineHeight: 1.5 })}>
+                        {alarm.detail}
+                    </p>
+                </div>
+                <Button variant="secondary" fullWidth icon={FiPhone} onClick={onCall}>
+                    Llamar ahora
+                </Button>
+                <label
+                    css={css({
+                        width: "100%",
+                        display: "grid",
+                        gap: 8,
+                        padding: "12px 14px 14px",
+                        borderRadius: 20,
+                        color: "var(--lumo-text)",
+                        background: "rgba(255,255,255,.96)",
+                    })}
+                >
+                    <span css={css({ fontSize: 11, textAlign: "center" })}>
+                        Desliza para detener la alarma
+                    </span>
+                    <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={progress}
+                        aria-label="Deslizar para detener la alarma"
+                        onChange={(event) => setProgress(event.currentTarget.valueAsNumber)}
+                        onPointerUp={(event) => release(event.currentTarget.valueAsNumber)}
+                        onKeyUp={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                                release(event.currentTarget.valueAsNumber);
+                            }
+                        }}
+                        css={css({
+                            width: "100%",
+                            height: 42,
+                            appearance: "none",
+                            borderRadius: 999,
+                            background: `linear-gradient(90deg, var(--lumo-danger) ${progress}%, #eee8ec ${progress}%)`,
+                            cursor: "ew-resize",
+                            "&::-webkit-slider-thumb": {
+                                width: 36,
+                                height: 36,
+                                appearance: "none",
+                                border: "4px solid #fff",
+                                borderRadius: "50%",
+                                background: "var(--lumo-danger)",
+                                boxShadow: "0 4px 12px rgba(125,38,56,.28)",
+                            },
+                        })}
+                    />
+                </label>
+            </section>
+        </div>
+    );
+}
 
 function Timeline({ events, compact = false }: { events: TimelineEvent[]; compact?: boolean }) {
     if (events.length === 0) {
@@ -1272,43 +1426,97 @@ export function Controller() {
     const [protectedAction, setProtectedAction] = useState<ControllerProtectedAction>(null);
     const [securityAction, setSecurityAction] = useState<GroupSecurityAction | null>(null);
     const [toast, setToast] = useState<ToastState | null>(null);
+    const [activeAlarm, setActiveAlarm] = useState<ActiveAlarm | null>(null);
     const unread = useMemo(
         () => state.events.filter((event) => !event.read).length,
         [state.events],
     );
 
+    useEffect(() => {
+        const coordinateText = state.demo.coordinates;
+        if (
+            state.demo.location !== "away" ||
+            state.demo.address ||
+            !coordinateText ||
+            !backend.isMobileNative()
+        ) {
+            return;
+        }
+        const parsed = parseCoordinates(coordinateText);
+        if (!parsed) return;
+        let active = true;
+        void backend
+            .reverseGeocode(parsed.latitude, parsed.longitude)
+            .then((address) => {
+                if (active && address) {
+                    dispatch({
+                        type: "SET_RESOLVED_ADDRESS",
+                        payload: { coordinates: coordinateText, address },
+                    });
+                }
+            })
+            .catch(() => undefined);
+        return () => {
+            active = false;
+        };
+    }, [backend, dispatch, state.demo.address, state.demo.coordinates, state.demo.location]);
+
+    useEffect(() => {
+        const help = state.events.find((event) => event.kind === "help" && !event.read);
+        if (help && activeAlarm?.id !== help.id) {
+            setActiveAlarm({ id: help.id, title: help.title, detail: help.detail });
+        }
+    }, [activeAlarm?.id, state.events]);
+
+    useEffect(() => {
+        if (!backend.isMobileNative()) return;
+        void backend
+            .getPendingEmergencyAlarm()
+            .then((alarm) => {
+                if (alarm) {
+                    setActiveAlarm({ id: alarm.id, title: alarm.title, detail: alarm.body });
+                }
+            })
+            .catch(() => undefined);
+    }, [backend]);
+
     const locate = async () => {
         if (locating) return;
         setLocating(true);
+        const previousUpdate = Date.parse(state.demo.lastUpdatedAt);
         try {
             const accepted = await backend.requestLocation();
             if (accepted) {
-                setLocating(false);
+                const deadline = Date.now() + 15_000;
+                while (Date.now() < deadline) {
+                    await new Promise((resolve) => window.setTimeout(resolve, 650));
+                    const snapshot = await backend.bootstrap("controller");
+                    if (!snapshot) break;
+                    const updatedAt = Date.parse(snapshot.demo.lastUpdatedAt);
+                    if (updatedAt > previousUpdate && snapshot.demo.coordinates) {
+                        dispatch({ type: "HYDRATE_BACKEND", payload: snapshot });
+                        setToast({
+                            title: "Ubicación actualizada",
+                            detail: snapshot.demo.address || snapshot.demo.placeName,
+                        });
+                        return;
+                    }
+                }
                 setToast({
                     title: "Solicitud enviada",
-                    detail: "El otro teléfono actualizará su ubicación en cuanto responda",
+                    detail: "Lumo seguirá actualizando la posición en segundo plano",
                 });
                 return;
             }
         } catch (requestError) {
-            setLocating(false);
             setToast({
                 title: "No se ha podido localizar",
                 detail: requestError instanceof Error ? requestError.message : "Inténtalo de nuevo",
             });
             return;
+        } finally {
+            setLocating(false);
         }
-        window.setTimeout(
-            () => {
-                dispatch({ type: "FINISH_LOCATE" });
-                setLocating(false);
-                setToast({
-                    title: "Ubicación actualizada",
-                    detail: `${state.demo.placeName} · precisión aproximada de 12 m`,
-                });
-            },
-            Math.max(700, state.demo.delaySeconds * 350),
-        );
     };
 
     const callTrackedPerson = async () => {
@@ -1334,6 +1542,17 @@ export function Controller() {
                         : "Revisa el número configurado",
             });
         }
+    };
+
+    const stopAlarm = async () => {
+        setActiveAlarm(null);
+        await backend.stopEmergencyAlarm().catch(() => false);
+        const snapshot = await backend.markEventsRead().catch(() => null);
+        dispatch(
+            snapshot
+                ? { type: "HYDRATE_BACKEND", payload: snapshot }
+                : { type: "MARK_EVENTS_READ" },
+        );
     };
 
     const openNotifications = async () => {
@@ -1522,6 +1741,13 @@ export function Controller() {
 
             {toast && (
                 <Toast title={toast.title} detail={toast.detail} onClose={() => setToast(null)} />
+            )}
+            {activeAlarm && (
+                <EmergencyAlarmOverlay
+                    alarm={activeAlarm}
+                    onStop={() => void stopAlarm()}
+                    onCall={() => void callTrackedPerson()}
+                />
             )}
         </main>
     );

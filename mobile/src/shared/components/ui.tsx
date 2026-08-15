@@ -11,14 +11,10 @@ import { css, keyframes, type CSSObject } from "@emotion/react";
 import type { IconType } from "react-icons";
 import { FiX } from "react-icons/fi";
 import gsap from "gsap";
+import { toast as sonnerToast } from "sonner";
 
 const spin = keyframes({
     to: { transform: "rotate(360deg)" },
-});
-
-const toastIn = keyframes({
-    from: { opacity: 0, transform: "translate(-50%, 14px) scale(0.97)" },
-    to: { opacity: 1, transform: "translate(-50%, 0) scale(1)" },
 });
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
@@ -563,62 +559,24 @@ interface ToastProps {
 }
 
 export function Toast({ title, detail, onClose }: ToastProps) {
-    useEffect(() => {
-        if (!onClose) return;
-        const timeout = window.setTimeout(onClose, 3200);
-        return () => window.clearTimeout(timeout);
-    }, [onClose, title, detail]);
+    const closeRef = useRef(onClose);
+    closeRef.current = onClose;
 
-    return (
-        <div
-            role="status"
-            aria-live="polite"
-            css={css({
-                position: "fixed",
-                zIndex: 70,
-                left: "50%",
-                bottom: "max(92px, calc(var(--lumo-safe-bottom) + 78px))",
-                width: "min(calc(100% - 32px), 420px)",
-                display: "flex",
-                alignItems: "flex-start",
-                justifyContent: "space-between",
-                gap: 12,
-                padding: "14px 16px",
-                border: "1px solid rgba(255,255,255,.14)",
-                borderRadius: 17,
-                color: "#fff",
-                background: "rgba(45, 36, 56, .96)",
-                boxShadow: "0 16px 40px rgba(34,26,44,.28)",
-                animation: `${toastIn} .28s ease both`,
-            })}
-        >
-            <span css={css({ display: "grid", gap: 3 })}>
-                <strong css={css({ fontSize: 14, fontWeight: 500 })}>{title}</strong>
-                {detail && <span css={css({ color: "#d8d2dc", fontSize: 12 })}>{detail}</span>}
-            </span>
-            {onClose && (
-                <button
-                    type="button"
-                    aria-label="Cerrar aviso"
-                    onClick={onClose}
-                    css={css({
-                        display: "grid",
-                        placeItems: "center",
-                        width: 30,
-                        height: 30,
-                        flex: "0 0 auto",
-                        border: 0,
-                        borderRadius: 10,
-                        color: "#fff",
-                        background: "rgba(255,255,255,.1)",
-                        cursor: "pointer",
-                    })}
-                >
-                    <FiX aria-hidden="true" />
-                </button>
-            )}
-        </div>
-    );
+    useEffect(() => {
+        const id = `lumo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        sonnerToast(title, {
+            id,
+            description: detail,
+            duration: 3400,
+            onAutoClose: () => closeRef.current?.(),
+            onDismiss: () => closeRef.current?.(),
+        });
+        return () => {
+            sonnerToast.dismiss(id);
+        };
+    }, [detail, title]);
+
+    return null;
 }
 
 export function Pill({

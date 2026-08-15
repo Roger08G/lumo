@@ -82,6 +82,7 @@ export interface InvitationData {
     groupName: string;
     groupCode: string;
     expiresAtMs: number;
+    role: "controller" | "controlled";
 }
 
 interface CreatePlaceInput {
@@ -104,6 +105,7 @@ declare global {
 const isNative = () => typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 const isMobileNative = () =>
     isNative() && /Android|iPhone|iPad|iPod/i.test(window.navigator.userAgent);
+const OFFLINE_AFTER_MS = 5 * 60_000;
 
 const configuredApiOrigin = (() => {
     const value = import.meta.env.VITE_LUMO_API_ORIGIN;
@@ -171,7 +173,7 @@ function hydrate(snapshot: BackendSnapshot): BackendHydration {
         : null;
     const lastSeenAt = snapshot.controlled.lastSeenAtMs;
     const connection =
-        lastSeenAt && Date.now() - lastSeenAt > 2 * 60_000
+        lastSeenAt && Date.now() - lastSeenAt > OFFLINE_AFTER_MS
             ? "offline"
             : snapshot.controlled.connectivity;
     const location = activePlace
@@ -229,6 +231,13 @@ function hydrate(snapshot: BackendSnapshot): BackendHydration {
                   : "Ubicación pendiente",
             sinceLabel: elapsedLabel(lastSeenAt),
             lastUpdatedAt: new Date(lastSeenAt ?? Date.now()).toISOString(),
+            coordinates: snapshot.controlled.lastLocation
+                ? coordinates(
+                      snapshot.controlled.lastLocation.latitude,
+                      snapshot.controlled.lastLocation.longitude,
+                  )
+                : null,
+            address: activePlace?.address ?? "",
             battery: snapshot.controlled.batteryPercent,
             connection,
             permission: snapshot.controlled.precisePermission === "granted" ? "granted" : "revoked",
@@ -250,7 +259,7 @@ function hydrate(snapshot: BackendSnapshot): BackendHydration {
         places,
         events: snapshot.events.map((event) => ({
             id: event.id,
-            kind: event.kind === "help" ? "warning" : event.kind,
+            kind: event.kind,
             title: event.title,
             detail: event.detail,
             at: new Date(event.occurredAtMs).toISOString(),
@@ -277,6 +286,9 @@ function toCreatePlaceInput(place: Place): CreatePlaceInput {
 
 function readableError(error: unknown): Error {
     const value = error as { code?: string; message?: string } | null;
+    if (value?.message?.includes("already has a controlled device")) {
+        return new Error("Este grupo ya tiene un teléfono controlado");
+    }
     const messages: Record<string, string> = {
         unauthorized: "El PIN no es correcto",
         rate_limited: "Demasiados intentos. Espera unos minutos",
@@ -349,6 +361,7 @@ export const lumoBackend = {
             token?: string;
             expiresAt?: number;
             apiOrigin?: string;
+            role?: "controller" | "controlled";
         };
         const validLegacy =
             !isMobileNative() &&
@@ -367,7 +380,8 @@ export const lumoBackend = {
             typeof value.expiresAt === "number" &&
             Number.isSafeInteger(value.expiresAt) &&
             value.expiresAt > Date.now() &&
-            value.expiresAt <= Date.now() + 60 * 60_000;
+            value.expiresAt <= Date.now() + 60 * 60_000 &&
+            (value.role === "controller" || value.role === "controlled");
         if (value.kind !== "lumo-group-invite" || (!validLegacy && !validCurrent)) {
             throw new Error("El código QR no contiene una invitación válida");
         }
@@ -396,13 +410,16 @@ export const lumoBackend = {
     },
 
     async joinGroup(invitationId: string, token: string, pin: string) {
-        const verified = await nativeInvoke<{ verified: boolean }>("group_consume_invitation", {
+        const verified = await nativeInvoke<{
+            verified: boolean;
+            role: "controller" | "controlled";
+        }>("group_consume_invitation", {
             invitationId,
             token,
             pin,
         });
         if (!verified) return null;
-        return this.bootstrap("tracker");
+        return this.bootstrap(verified.role === "controller" ? "controller" : "tracker");
     },
 
     async verifyPin(pin: string) {
@@ -410,8 +427,8 @@ export const lumoBackend = {
         return verified?.verified ?? /^\d{6}$/.test(pin);
     },
 
-    async createInvitation(pin: string) {
-        return nativeInvoke<InvitationData>("group_create_invitation", { pin });
+    async createInvitation(pin: string, role: "controller" | "controlled") {
+        return nativeInvoke<InvitationData>("group_create_invitation", { pin, role });
     },
 
     async leaveGroup(pin: string) {
@@ -510,7 +527,7 @@ export const lumoBackend = {
         return nativeInvoke<MobileRuntimeStatus>("mobile_configure_tracking", {
             role,
             enabled,
-            intervalSeconds: 30,
+            intervalSeconds: 5,
         });
     },
 
@@ -527,6 +544,15 @@ export const lumoBackend = {
         return true;
     },
 
+    async reverseGeocode(latitude: number, longitude: number) {
+        if (!isMobileNative()) return null;
+        const result = await nativeInvoke<{ address: string | null }>("mobile_reverse_geocode", {
+            latitude,
+            longitude,
+        });
+        return result?.address?.trim() || null;
+    },
+
     async showNotification(
         title: string,
         body: string,
@@ -539,6 +565,28 @@ export const lumoBackend = {
             body,
             urgent: options.urgent ?? false,
         });
+        return true;
+    },
+
+    async startEmergencyAlarm(id: string, title: string, body: string, phone?: string) {
+        if (!isMobileNative()) return false;
+        await nativeInvoke("mobile_start_emergency_alarm", { id, title, body, phone });
+        return true;
+    },
+
+    async getPendingEmergencyAlarm() {
+        if (!isMobileNative()) return null;
+        return nativeInvoke<{
+            id: string;
+            title: string;
+            body: string;
+            phone: string | null;
+        }>("mobile_get_pending_alarm");
+    },
+
+    async stopEmergencyAlarm() {
+        if (!isMobileNative()) return false;
+        await nativeInvoke("mobile_stop_emergency_alarm");
         return true;
     },
 

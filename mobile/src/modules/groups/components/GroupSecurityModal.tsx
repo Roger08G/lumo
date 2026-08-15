@@ -1,6 +1,15 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { css } from "@emotion/react";
-import { FiCheck, FiCopy, FiKey, FiLock, FiLogOut, FiUserPlus } from "react-icons/fi";
+import {
+    FiCheck,
+    FiCopy,
+    FiKey,
+    FiLock,
+    FiLogOut,
+    FiMapPin,
+    FiShield,
+    FiUserPlus,
+} from "react-icons/fi";
 import { QRCodeSVG } from "qrcode.react";
 
 import { useLumo } from "@app/state/lumoContext.ts";
@@ -23,6 +32,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
     const [copied, setCopied] = useState(false);
     const [loading, setLoading] = useState(false);
     const [invitation, setInvitation] = useState<InvitationData | null>(null);
+    const [inviteRole, setInviteRole] = useState<"controller" | "controlled">("controlled");
 
     useEffect(() => {
         if (action) return;
@@ -32,6 +42,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
         setCopied(false);
         setLoading(false);
         setInvitation(null);
+        setInviteRole("controlled");
     }, [action]);
 
     const close = () => {
@@ -54,7 +65,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                 return;
             }
 
-            const created = await backend.createInvitation(pin);
+            const created = await backend.createInvitation(pin, inviteRole);
             const invite =
                 created ??
                 ({
@@ -63,6 +74,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                     groupName: state.group.name,
                     groupCode: state.group.code,
                     expiresAtMs: Date.now() + 10 * 60_000,
+                    role: inviteRole,
                 } satisfies InvitationData);
             setInvitation(invite);
             if (!backend.isNative()) {
@@ -76,6 +88,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                             token: invite.token,
                             expiresAt: invite.expiresAtMs,
                             apiOrigin: backend.apiOrigin(),
+                            role: invite.role,
                         }),
                     );
                 } catch {
@@ -161,6 +174,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                                     token: invitation?.token,
                                     expiresAt: invitation?.expiresAtMs,
                                     apiOrigin: backend.apiOrigin(),
+                                    role: invitation?.role,
                                 })}
                                 size={220}
                                 level="H"
@@ -204,6 +218,12 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                             >
                                 Invitación segura de Lumo
                             </span>
+                            <Pill tone={invitation?.role === "controller" ? "purple" : "green"}>
+                                {invitation?.role === "controller" ? <FiShield /> : <FiMapPin />}
+                                {invitation?.role === "controller"
+                                    ? "Nuevo controlador"
+                                    : "Teléfono controlado"}
+                            </Pill>
                         </div>
                     </div>
                     <p
@@ -261,6 +281,83 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                             ? "Introduce el PIN para ver los datos que deberá usar el nuevo miembro."
                             : "Introduce el PIN para confirmar que quieres desvincular este teléfono."}
                     </div>
+                    {isInvite && (
+                        <fieldset
+                            css={css({
+                                minWidth: 0,
+                                display: "grid",
+                                gridTemplateColumns: "1fr 1fr",
+                                gap: 8,
+                                padding: 0,
+                                border: 0,
+                            })}
+                        >
+                            <legend
+                                css={css({
+                                    gridColumn: "1 / -1",
+                                    marginBottom: 8,
+                                    color: "var(--lumo-text-muted)",
+                                    fontSize: 10,
+                                    letterSpacing: ".06em",
+                                    textTransform: "uppercase",
+                                })}
+                            >
+                                Rol del nuevo teléfono
+                            </legend>
+                            {(
+                                [
+                                    {
+                                        role: "controlled" as const,
+                                        icon: FiMapPin,
+                                        title: "Controlado",
+                                        detail: "Comparte ubicación",
+                                    },
+                                    {
+                                        role: "controller" as const,
+                                        icon: FiShield,
+                                        title: "Controlador",
+                                        detail: "Recibe avisos",
+                                    },
+                                ] as const
+                            ).map((option) => (
+                                <button
+                                    key={option.role}
+                                    type="button"
+                                    aria-pressed={inviteRole === option.role}
+                                    onClick={() => setInviteRole(option.role)}
+                                    css={css({
+                                        minHeight: 76,
+                                        display: "grid",
+                                        justifyItems: "start",
+                                        gap: 4,
+                                        padding: 12,
+                                        border:
+                                            inviteRole === option.role
+                                                ? "1.5px solid var(--lumo-primary)"
+                                                : "1px solid var(--lumo-border)",
+                                        borderRadius: 16,
+                                        color: "var(--lumo-text)",
+                                        background:
+                                            inviteRole === option.role
+                                                ? "var(--lumo-lavender)"
+                                                : "#fff",
+                                        textAlign: "left",
+                                    })}
+                                >
+                                    <option.icon color="var(--lumo-primary)" size={17} />
+                                    <strong css={css({ fontSize: 12 })}>{option.title}</strong>
+                                    <span
+                                        css={css({
+                                            color: "var(--lumo-text-secondary)",
+                                            fontSize: 9,
+                                        })}
+                                    >
+                                        {option.detail}
+                                    </span>
+                                </button>
+                            ))}
+                        </fieldset>
+                    )}
                     <Field
                         type="password"
                         inputMode="numeric"

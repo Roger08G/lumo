@@ -46,6 +46,7 @@ interface PreviewInvite {
     token?: string;
     expiresAt?: number;
     apiOrigin?: string;
+    role?: "controller" | "controlled";
 }
 
 type GroupAction = "create" | "join" | null;
@@ -76,6 +77,7 @@ function readPreviewInvite(): PreviewInvite {
         code: "LUMO24",
         supervisorName: "Supervisor",
         trackedPersonName: "Persona acompañada",
+        role: "controlled",
         token: "preview-invitation",
     };
 }

@@ -18,7 +18,7 @@ export type PlaceIcon =
 
 export type LocationKey = "home" | "supermarket" | "medical" | "away" | "unknown";
 
-export type EventKind = "arrival" | "departure" | "location" | "warning" | "system";
+export type EventKind = "arrival" | "departure" | "location" | "warning" | "help" | "system";
 
 export interface GroupState {
     active: boolean;
@@ -45,6 +45,8 @@ export interface DemoState {
     statusText: string;
     sinceLabel: string;
     lastUpdatedAt: string;
+    coordinates: string | null;
+    address: string;
     battery: number;
     connection: "online" | "offline";
     permission: "granted" | "revoked";
@@ -156,6 +158,7 @@ export type LumoAction =
     | { type: "SET_PERMISSION"; payload: DemoState["permission"] }
     | { type: "SET_ACCURACY"; payload: DemoState["accuracy"] }
     | { type: "SET_DELAY"; payload: number }
+    | { type: "SET_RESOLVED_ADDRESS"; payload: { coordinates: string; address: string } }
     | { type: "ADD_PLACE"; payload: Place }
     | { type: "UPDATE_PLACE"; payload: Place }
     | { type: "DELETE_PLACE"; payload: { id: string } }

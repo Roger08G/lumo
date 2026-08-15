@@ -46,7 +46,7 @@
             "icons/icon.ico"
         ],
         "android": {
-            "versionCode": 1001
+            "versionCode": 1002
         }
     }
 }
