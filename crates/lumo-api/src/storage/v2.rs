@@ -18,7 +18,7 @@ use crate::{auth::DeviceAuthAttempt, config::ApiLimits, crypto::MasterKey};
 
 use super::{storage_error, ApiStore};
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 const PIN_MAX_ATTEMPTS: i64 = 5;
 const PIN_LOCK_MS: i64 = 5 * 60 * 1_000;
 const MAX_NONCES_PER_DEVICE: i64 = 256;
@@ -55,6 +55,7 @@ pub struct NewInvitation {
     pub controller_id: String,
     pub pin: Zeroizing<String>,
     pub token_hash: Vec<u8>,
+    pub role: DeviceRole,
     pub created_at_ms: i64,
 }
 
@@ -101,7 +102,16 @@ pub struct MemberSnapshotResult {
     pub snapshot: AppSnapshot,
 }
 
-type StoredInvitationRow = (String, Vec<u8>, i64, Option<i64>, i64, Option<i64>, String);
+type StoredInvitationRow = (
+    String,
+    Vec<u8>,
+    i64,
+    Option<i64>,
+    i64,
+    Option<i64>,
+    String,
+    String,
+);
 type WrappedMemberKeyRow = (Option<Vec<u8>>, Option<Vec<u8>>);
 type StoredReplayRow = (Vec<u8>, Vec<u8>, Vec<u8>, i64);
 
@@ -146,15 +156,17 @@ pub(super) fn migrate(connection: &Connection) -> LumoResult<()> {
              );
              CREATE UNIQUE INDEX IF NOT EXISTS devices_v2_token_hash
                 ON devices_v2(token_hash);
-             CREATE UNIQUE INDEX IF NOT EXISTS devices_v2_one_controller
+             DROP INDEX IF EXISTS devices_v2_one_controller;
+             CREATE UNIQUE INDEX IF NOT EXISTS devices_v2_one_controlled
                 ON devices_v2(group_id)
-                WHERE role = 'controller';
+                WHERE role = 'controlled' AND revoked_at_ms IS NULL;
              CREATE INDEX IF NOT EXISTS devices_v2_group
                 ON devices_v2(group_id, revoked_at_ms);
              CREATE TABLE IF NOT EXISTS invitations_v2 (
                 id TEXT PRIMARY KEY,
                 group_id TEXT NOT NULL REFERENCES groups_v2(id) ON DELETE CASCADE,
                 token_hash BLOB NOT NULL,
+                role TEXT NOT NULL DEFAULT 'controlled' CHECK(role IN ('controller', 'controlled')),
                 created_by_device_id TEXT NOT NULL REFERENCES devices_v2(id),
                 created_at_ms INTEGER NOT NULL,
                 expires_at_ms INTEGER NOT NULL,
@@ -220,6 +232,12 @@ pub(super) fn migrate(connection: &Connection) -> LumoResult<()> {
         .map_err(storage_error)?;
     add_column_if_missing(connection, "devices_v2", "member_key_nonce", "BLOB")?;
     add_column_if_missing(connection, "devices_v2", "member_key_ciphertext", "BLOB")?;
+    add_column_if_missing(
+        connection,
+        "invitations_v2",
+        "role",
+        "TEXT NOT NULL DEFAULT 'controlled' CHECK(role IN ('controller', 'controlled'))",
+    )?;
     connection
         .pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(storage_error)
@@ -677,12 +695,27 @@ impl ApiStore {
         if active >= limits.max_active_invites_per_group {
             return Err(LumoError::RateLimited);
         }
+        if invitation.role == DeviceRole::Controlled {
+            let active_controlled: u32 = transaction
+                .query_row(
+                    "SELECT COUNT(*) FROM devices_v2
+                     WHERE group_id = ?1 AND role = 'controlled' AND revoked_at_ms IS NULL",
+                    params![invitation.group_id],
+                    |row| row.get(0),
+                )
+                .map_err(storage_error)?;
+            if active_controlled > 0 {
+                return Err(LumoError::InvalidInput(
+                    "the group already has a controlled device".to_owned(),
+                ));
+            }
+        }
         transaction
             .execute(
                 "INSERT INTO invitations_v2(
                     id, group_id, token_hash, created_by_device_id,
-                    created_at_ms, expires_at_ms
-                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+                    created_at_ms, expires_at_ms, role
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     invitation.id,
                     invitation.group_id,
@@ -691,7 +724,8 @@ impl ApiStore {
                     invitation.created_at_ms,
                     invitation
                         .created_at_ms
-                        .saturating_add(limits.invite_ttl_ms)
+                        .saturating_add(limits.invite_ttl_ms),
+                    invitation.role.as_str(),
                 ],
             )
             .map_err(storage_error)?;
@@ -737,7 +771,7 @@ impl ApiStore {
         let invitation: Option<StoredInvitationRow> = transaction
             .query_row(
                 "SELECT i.group_id, i.token_hash, i.expires_at_ms, i.used_at_ms,
-                        i.failed_attempts, i.locked_until_ms, g.pin_hash
+                        i.failed_attempts, i.locked_until_ms, g.pin_hash, i.role
                  FROM invitations_v2 i
                  JOIN groups_v2 g ON g.id = i.group_id
                  WHERE i.id = ?1",
@@ -751,6 +785,7 @@ impl ApiStore {
                         row.get(4)?,
                         row.get(5)?,
                         row.get(6)?,
+                        row.get(7)?,
                     ))
                 },
             )
@@ -764,6 +799,7 @@ impl ApiStore {
             mut failed_attempts,
             locked_until_ms,
             pin_hash,
+            invited_role,
         )) = invitation
         else {
             return Err(LumoError::InvalidInvitation);
@@ -816,12 +852,34 @@ impl ApiStore {
         if devices >= limits.max_devices_per_group {
             return Err(LumoError::RateLimited);
         }
-        let (member_key_nonce, member_key_ciphertext) =
-            master.wrap_member_key(&group_id, &device.id, &consumption.member_key)?;
-        let mut controlled_device = device.clone();
-        controlled_device.member_key_nonce = Some(member_key_nonce);
-        controlled_device.member_key_ciphertext = Some(member_key_ciphertext);
-        insert_device(&transaction, &group_id, &controlled_device, now_ms)?;
+        let invited_role = DeviceRole::from_str(&invited_role)?;
+        if invited_role == DeviceRole::Controlled {
+            let active_controlled: u32 = transaction
+                .query_row(
+                    "SELECT COUNT(*) FROM devices_v2
+                     WHERE group_id = ?1 AND role = 'controlled' AND revoked_at_ms IS NULL",
+                    params![group_id],
+                    |row| row.get(0),
+                )
+                .map_err(storage_error)?;
+            if active_controlled > 0 {
+                return Err(LumoError::InvalidInput(
+                    "the group already has a controlled device".to_owned(),
+                ));
+            }
+        }
+        let mut provisioned_device = device.clone();
+        provisioned_device.role = invited_role;
+        if invited_role == DeviceRole::Controlled {
+            let (member_key_nonce, member_key_ciphertext) =
+                master.wrap_member_key(&group_id, &device.id, &consumption.member_key)?;
+            provisioned_device.member_key_nonce = Some(member_key_nonce);
+            provisioned_device.member_key_ciphertext = Some(member_key_ciphertext);
+        } else {
+            provisioned_device.member_key_nonce = None;
+            provisioned_device.member_key_ciphertext = None;
+        }
+        insert_device(&transaction, &group_id, &provisioned_device, now_ms)?;
         let updated = transaction
             .execute(
                 "UPDATE invitations_v2 SET used_at_ms = ?2
@@ -832,13 +890,17 @@ impl ApiStore {
         if updated != 1 {
             return Err(LumoError::InvalidInvitation);
         }
+        let credential_key = if invited_role == DeviceRole::Controlled {
+            consumption.member_key
+        } else {
+            load_canonical_key(&transaction, master, &group_id)?
+        };
         let credential = DeviceCredentialResponse {
             group_id,
             device_id: device.id.clone(),
-            role: DeviceRole::Controlled,
+            role: invited_role,
             device_token: consumption.device_token.to_string(),
-            state_key: base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .encode(consumption.member_key),
+            state_key: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(credential_key),
         };
         store_idempotent(
             &transaction,
@@ -1048,11 +1110,33 @@ impl ApiStore {
             transaction.commit().map_err(storage_error)?;
             return Err(error);
         }
+        let target_role: String = transaction
+            .query_row(
+                "SELECT role FROM devices_v2
+                 WHERE id = ?1 AND group_id = ?2 AND revoked_at_ms IS NULL",
+                params![target_device_id, group_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(storage_error)?
+            .ok_or_else(|| LumoError::NotFound("device".to_owned()))?;
+        if DeviceRole::from_str(&target_role)? == DeviceRole::Controller {
+            let active_controllers: u32 = transaction
+                .query_row(
+                    "SELECT COUNT(*) FROM devices_v2
+                     WHERE group_id = ?1 AND role = 'controller' AND revoked_at_ms IS NULL",
+                    params![group_id],
+                    |row| row.get(0),
+                )
+                .map_err(storage_error)?;
+            if active_controllers <= 1 {
+                return Err(LumoError::Unauthorized);
+            }
+        }
         let changed = transaction
             .execute(
                 "UPDATE devices_v2 SET revoked_at_ms = ?3
-                 WHERE id = ?1 AND group_id = ?2 AND role = 'controlled'
-                   AND revoked_at_ms IS NULL",
+                 WHERE id = ?1 AND group_id = ?2 AND revoked_at_ms IS NULL",
                 params![target_device_id, group_id, now_ms],
             )
             .map_err(storage_error)?;
@@ -1113,8 +1197,7 @@ impl ApiStore {
         let changed = connection
             .execute(
                 "UPDATE devices_v2 SET revoked_at_ms = ?3
-                 WHERE id = ?1 AND group_id = ?2 AND role = 'controlled'
-                   AND revoked_at_ms IS NULL",
+                 WHERE id = ?1 AND group_id = ?2 AND revoked_at_ms IS NULL",
                 params![target_device_id, group_id, now_ms],
             )
             .map_err(storage_error)?;
@@ -1142,14 +1225,47 @@ impl ApiStore {
             transaction.commit().map_err(storage_error)?;
             return Err(error);
         }
-        let changed = transaction
-            .execute(
-                "UPDATE devices_v2 SET revoked_at_ms = ?3
-                 WHERE id = ?1 AND group_id = ?2 AND role = 'controlled'
-                   AND revoked_at_ms IS NULL",
-                params![device_id, group_id, now_ms],
+        let role: String = transaction
+            .query_row(
+                "SELECT role FROM devices_v2
+                 WHERE id = ?1 AND group_id = ?2 AND revoked_at_ms IS NULL",
+                params![device_id, group_id],
+                |row| row.get(0),
             )
-            .map_err(storage_error)?;
+            .optional()
+            .map_err(storage_error)?
+            .ok_or(LumoError::Unauthorized)?;
+        let changed = if DeviceRole::from_str(&role)? == DeviceRole::Controller {
+            let active_controllers: u32 = transaction
+                .query_row(
+                    "SELECT COUNT(*) FROM devices_v2
+                     WHERE group_id = ?1 AND role = 'controller' AND revoked_at_ms IS NULL",
+                    params![group_id],
+                    |row| row.get(0),
+                )
+                .map_err(storage_error)?;
+            if active_controllers <= 1 {
+                transaction
+                    .execute("DELETE FROM groups_v2 WHERE id = ?1", params![group_id])
+                    .map_err(storage_error)?
+            } else {
+                transaction
+                    .execute(
+                        "UPDATE devices_v2 SET revoked_at_ms = ?3
+                         WHERE id = ?1 AND group_id = ?2 AND revoked_at_ms IS NULL",
+                        params![device_id, group_id, now_ms],
+                    )
+                    .map_err(storage_error)?
+            }
+        } else {
+            transaction
+                .execute(
+                    "UPDATE devices_v2 SET revoked_at_ms = ?3
+                     WHERE id = ?1 AND group_id = ?2 AND revoked_at_ms IS NULL",
+                    params![device_id, group_id, now_ms],
+                )
+                .map_err(storage_error)?
+        };
         if changed != 1 {
             return Err(LumoError::Unauthorized);
         }
@@ -1329,6 +1445,21 @@ fn load_member_key(
         ));
     };
     master.unwrap_member_key(group_id, device_id, &nonce, &ciphertext)
+}
+
+fn load_canonical_key(
+    transaction: &Transaction<'_>,
+    master: &MasterKey,
+    group_id: &str,
+) -> LumoResult<[u8; 32]> {
+    let wrapped: (Vec<u8>, Vec<u8>) = transaction
+        .query_row(
+            "SELECT state_key_nonce, state_key_ciphertext FROM groups_v2 WHERE id = ?1",
+            params![group_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(storage_error)?;
+    master.unwrap_state_key(group_id, &wrapped.0, &wrapped.1)
 }
 
 fn load_runtime_state(

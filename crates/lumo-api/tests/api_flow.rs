@@ -219,6 +219,81 @@ async fn invitations_are_single_use_and_devices_are_revocable() {
 }
 
 #[tokio::test]
+async fn invitations_allow_multiple_controllers_but_only_one_controlled_device() {
+    let directory = tempdir().expect("temporary directory");
+    let app = build_app(&test_config(&directory.path().join("api.sqlite3"))).expect("application");
+    let first_controller = create_group(&app, "Controller", "192.0.2.25").await;
+    seed_runtime_state(&app, &first_controller).await;
+
+    let controller_invitation =
+        create_invitation_with_role(&app, &first_controller, DeviceRole::Controller).await;
+    assert_eq!(controller_invitation.role, DeviceRole::Controller);
+    let second_controller =
+        consume_controlled(&app, &controller_invitation, Uuid::new_v4().to_string()).await;
+    assert_eq!(second_controller.role, DeviceRole::Controller);
+    assert_eq!(second_controller.state_key, first_controller.state_key);
+
+    let first_controlled_invitation = create_invitation(&app, &second_controller).await;
+    let second_controlled_invitation = create_invitation(&app, &first_controller).await;
+    let controlled = consume_controlled(
+        &app,
+        &first_controlled_invitation,
+        Uuid::new_v4().to_string(),
+    )
+    .await;
+    assert_eq!(controlled.role, DeviceRole::Controlled);
+    assert_ne!(controlled.state_key, first_controller.state_key);
+
+    let response = app
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            &invitation_consume_path(&second_controlled_invitation.invitation_id),
+            &ConsumeInvitationRequest {
+                request_id: Uuid::new_v4().to_string(),
+                token: second_controlled_invitation.token,
+                pin: PIN.to_owned(),
+                device_name: "Second controlled".to_owned(),
+            },
+        ))
+        .await
+        .expect("reject second controlled");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = app
+        .oneshot(authenticated_request(
+            Method::GET,
+            &group_devices_path(&first_controller.group_id),
+            Vec::new(),
+            &second_controller,
+        ))
+        .await
+        .expect("list devices from invited controller");
+    assert_eq!(response.status(), StatusCode::OK);
+    let devices: DeviceListResponse = response_json(response).await;
+    assert_eq!(
+        devices
+            .devices
+            .iter()
+            .filter(|device| {
+                device.role == DeviceRole::Controller && device.revoked_at_ms.is_none()
+            })
+            .count(),
+        2
+    );
+    assert_eq!(
+        devices
+            .devices
+            .iter()
+            .filter(|device| {
+                device.role == DeviceRole::Controlled && device.revoked_at_ms.is_none()
+            })
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn member_endpoints_enforce_acl_key_isolation_and_least_privilege() {
     let directory = tempdir().expect("temporary directory");
     let database_path = directory.path().join("api.sqlite3");
@@ -1064,7 +1139,7 @@ fn v2_migration_preserves_legacy_storage_without_exposing_it() {
             |row| row.get(0),
         )
         .expect("v2 table");
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     assert_eq!(legacy_rows, 1);
     assert_eq!(v2_tables, 3);
 }
@@ -1123,7 +1198,7 @@ async fn schema_v3_migrates_pin_guards_and_bootstrap_reservations_without_data_l
             |row| row.get(0),
         )
         .expect("existing group");
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     assert_eq!(new_tables, 2);
     assert_eq!(existing_group, 1);
 }
@@ -1245,6 +1320,14 @@ async fn create_invitation(
     app: &Router,
     controller: &DeviceCredentialResponse,
 ) -> InvitationResponse {
+    create_invitation_with_role(app, controller, DeviceRole::Controlled).await
+}
+
+async fn create_invitation_with_role(
+    app: &Router,
+    controller: &DeviceCredentialResponse,
+    role: DeviceRole,
+) -> InvitationResponse {
     let response = app
         .clone()
         .oneshot(authenticated_json_request(
@@ -1252,6 +1335,7 @@ async fn create_invitation(
             &group_invitations_path(&controller.group_id),
             &CreateInvitationRequest {
                 pin: PIN.to_owned(),
+                role,
             },
             controller,
         ))

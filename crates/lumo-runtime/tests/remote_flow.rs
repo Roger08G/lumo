@@ -9,6 +9,7 @@ use lumo_core::{
     domain::{CommandStatus, PermissionState, RuntimeProfile},
     LumoError,
 };
+use lumo_protocol::DeviceRole;
 use lumo_runtime::{FixedClock, LocalBackend, RemoteRepository};
 use tempfile::tempdir;
 use tokio::net::TcpListener;
@@ -97,7 +98,7 @@ async fn v2_device_credentials_connect_and_revoke_controller_and_controlled_clie
         assert_eq!(controller.verify_pin(pin), Err(LumoError::RateLimited));
 
         let invitation = controller_repository
-            .create_invitation(pin)
+            .create_invitation(pin, DeviceRole::Controlled)
             .expect("create invitation");
         let controlled_repository =
             RemoteRepository::new(&base_url, None, true).expect("controlled repository");

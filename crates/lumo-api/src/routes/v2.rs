@@ -279,6 +279,7 @@ pub async fn create_invitation(
         controller_id: actor.device_id,
         pin: zeroize::Zeroizing::new(request.pin),
         token_hash,
+        role: request.role,
         created_at_ms: now_ms,
     };
     let result =
@@ -290,6 +291,7 @@ pub async fn create_invitation(
                 invitation_id,
                 token,
                 expires_at_ms,
+                role: request.role,
             }),
         )
             .into_response(),
@@ -548,9 +550,6 @@ pub async fn leave_group(
             Ok(actor) => actor,
             Err(error) => return api_error(error),
         };
-    if actor.role != DeviceRole::Controlled {
-        return api_error(LumoError::Unauthorized);
-    }
     let request = match serde_json::from_slice::<ProtectedActionRequest>(&body) {
         Ok(request) => request,
         Err(error) => return invalid_body(error),

@@ -35,6 +35,13 @@ pub struct TripSummary {
     pub duration_seconds: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeofenceCandidate {
+    pub place_id: Option<String>,
+    pub confirmations: u8,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlledDevice {
@@ -47,6 +54,8 @@ pub struct ControlledDevice {
     pub last_seen_at_ms: Option<i64>,
     pub last_location: Option<LocationSample>,
     pub current_place_id: Option<String>,
+    #[serde(default)]
+    pub geofence_candidate: Option<GeofenceCandidate>,
     pub departed_place_id: Option<String>,
     pub departed_at_ms: Option<i64>,
     pub last_trip: Option<TripSummary>,
@@ -64,6 +73,7 @@ impl Default for ControlledDevice {
             last_seen_at_ms: None,
             last_location: None,
             current_place_id: None,
+            geofence_candidate: None,
             departed_place_id: None,
             departed_at_ms: None,
             last_trip: None,

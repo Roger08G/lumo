@@ -6,11 +6,11 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        AppSnapshot, CommandKind, CommandStatus, Connectivity, EventKind, Group, Invitation,
-        LocationSample, PendingCommand, PermissionState, Place, PlaceIcon, PlaceKind, PlaceTone,
-        RuntimeProfile, RuntimeState, TimelineEvent, TripSummary, EVENT_TTL_MS,
+        AppSnapshot, CommandKind, CommandStatus, Connectivity, EventKind, GeofenceCandidate, Group,
+        Invitation, LocationSample, PendingCommand, PermissionState, Place, PlaceIcon, PlaceKind,
+        PlaceTone, RuntimeProfile, RuntimeState, TimelineEvent, TripSummary, EVENT_TTL_MS,
     },
-    geofence::containing_place,
+    geofence::{containing_place, distance_m},
     security::{hash_pin, validate_pin, verify_pin},
     LumoError, LumoResult,
 };
@@ -22,6 +22,9 @@ const BATTERY_WARNING_COOLDOWN_MS: i64 = 60 * 60 * 1_000;
 const BATTERY_WARNING_TITLE: &str = "Batería baja";
 const MAX_COMMANDS: usize = 100;
 const MAX_LOCATION_FUTURE_SKEW_MS: i64 = 5 * 60 * 1_000;
+const GEOFENCE_CONFIRMATIONS: u8 = 3;
+const MAX_GEOFENCE_TRANSITION_ACCURACY_M: f32 = 80.0;
+const MIN_GEOFENCE_EXIT_BUFFER_M: f64 = 25.0;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +77,7 @@ pub struct InvitationView {
     pub group_name: String,
     pub group_code: String,
     pub expires_at_ms: i64,
+    pub role: String,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -184,6 +188,7 @@ impl LumoService {
             group_name: group.name.clone(),
             group_code: group.code.clone(),
             expires_at_ms,
+            role: "controlled".to_owned(),
         };
         state.invitations.push(Invitation {
             id: invitation_id,
@@ -409,11 +414,31 @@ impl LumoService {
         {
             return Ok(());
         }
-        let next_place = containing_place(&state.places, input.latitude, input.longitude)
-            .map(|place| (place.id.clone(), place.name.clone()));
         let previous_place_id = state.controlled.current_place_id.clone();
+        let observed_place_id = observed_place(
+            &state.places,
+            previous_place_id.as_deref(),
+            input.latitude,
+            input.longitude,
+            input.accuracy_m,
+        );
+        let (transition_confirmed, confirmed_place_id) = confirm_geofence_transition(
+            &mut state.controlled.geofence_candidate,
+            previous_place_id.as_deref(),
+            observed_place_id,
+            input.accuracy_m,
+        );
+        let next_place = confirmed_place_id
+            .as_deref()
+            .and_then(|id| state.places.iter().find(|place| place.id == id))
+            .map(|place| (place.id.clone(), place.name.clone()));
+        let next_place_id = if transition_confirmed {
+            confirmed_place_id
+        } else {
+            previous_place_id.clone()
+        };
 
-        if previous_place_id != next_place.as_ref().map(|(id, _)| id.clone()) {
+        if transition_confirmed && previous_place_id != next_place_id {
             if let Some(previous_id) = previous_place_id.as_deref() {
                 let previous_name = place_name(state, previous_id);
                 add_event(
@@ -455,7 +480,7 @@ impl LumoService {
             }
         }
 
-        state.controlled.current_place_id = next_place.map(|(id, _)| id);
+        state.controlled.current_place_id = next_place_id;
         state.controlled.last_location = Some(LocationSample {
             latitude: input.latitude,
             longitude: input.longitude,
@@ -632,6 +657,65 @@ fn validate_location(input: &ReportLocationInput) -> LumoResult<()> {
         ));
     }
     Ok(())
+}
+
+fn observed_place(
+    places: &[Place],
+    current_place_id: Option<&str>,
+    latitude: f64,
+    longitude: f64,
+    accuracy_m: f32,
+) -> Option<String> {
+    // Leaving a place needs a wider boundary than entering it. This hysteresis prevents a GPS
+    // sample near the 50 m edge from alternating between "inside" and "outside".
+    if let Some(current) =
+        current_place_id.and_then(|id| places.iter().find(|place| place.id == id))
+    {
+        let exit_buffer = f64::from(accuracy_m).clamp(MIN_GEOFENCE_EXIT_BUFFER_M, 50.0);
+        if distance_m(latitude, longitude, current.latitude, current.longitude)
+            <= f64::from(current.radius_m) + exit_buffer
+        {
+            return Some(current.id.clone());
+        }
+    }
+
+    containing_place(places, latitude, longitude).map(|place| place.id.clone())
+}
+
+fn confirm_geofence_transition(
+    candidate: &mut Option<GeofenceCandidate>,
+    current_place_id: Option<&str>,
+    observed_place_id: Option<String>,
+    accuracy_m: f32,
+) -> (bool, Option<String>) {
+    if observed_place_id.as_deref() == current_place_id {
+        *candidate = None;
+        return (false, observed_place_id);
+    }
+    if accuracy_m > MAX_GEOFENCE_TRANSITION_ACCURACY_M {
+        *candidate = None;
+        return (false, observed_place_id);
+    }
+
+    let confirmations = match candidate {
+        Some(existing) if existing.place_id == observed_place_id => {
+            existing.confirmations = existing.confirmations.saturating_add(1);
+            existing.confirmations
+        }
+        _ => {
+            *candidate = Some(GeofenceCandidate {
+                place_id: observed_place_id.clone(),
+                confirmations: 1,
+            });
+            1
+        }
+    };
+    if confirmations < GEOFENCE_CONFIRMATIONS {
+        return (false, observed_place_id);
+    }
+
+    *candidate = None;
+    (true, observed_place_id)
 }
 
 fn token_digest(token: &str) -> String {
@@ -896,8 +980,11 @@ mod tests {
             .report_location(&mut state, location.clone(), 4)
             .expect("first");
         service
-            .report_location(&mut state, location, 5)
+            .report_location(&mut state, location.clone(), 5)
             .expect("second");
+        service
+            .report_location(&mut state, location, 6)
+            .expect("confirmed");
         assert_eq!(
             state
                 .events
@@ -906,6 +993,68 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn one_inaccurate_boundary_sample_does_not_create_a_false_trip() {
+        let service = LumoService;
+        let mut state = RuntimeState::default();
+        service
+            .create_group(&mut state, group_input(), 1)
+            .expect("group");
+        service
+            .create_place(&mut state, place_input("Casa", 40.4168, -3.7038), 2)
+            .expect("place");
+        service
+            .set_tracking(
+                &mut state,
+                SetTrackingInput {
+                    precise_permission: PermissionState::Granted,
+                    background_permission: PermissionState::Granted,
+                    battery_optimization_disabled: true,
+                    enabled: true,
+                },
+                3,
+            )
+            .expect("tracking");
+        let sample = |latitude, accuracy_m, captured_at_ms| ReportLocationInput {
+            latitude,
+            longitude: -3.7038,
+            accuracy_m,
+            battery_percent: 80,
+            captured_at_ms: Some(captured_at_ms),
+        };
+        for timestamp in 4..=6 {
+            service
+                .report_location(&mut state, sample(40.4168, 8.0, timestamp), timestamp)
+                .expect("confirm home");
+        }
+        let arrivals = state
+            .events
+            .iter()
+            .filter(|event| event.kind == EventKind::Arrival)
+            .count();
+
+        service
+            .report_location(&mut state, sample(40.4180, 120.0, 7), 7)
+            .expect("noisy boundary sample");
+        service
+            .report_location(&mut state, sample(40.4168, 8.0, 8), 8)
+            .expect("back home");
+
+        assert!(state.controlled.current_place_id.is_some());
+        assert_eq!(
+            state
+                .events
+                .iter()
+                .filter(|event| event.kind == EventKind::Arrival)
+                .count(),
+            arrivals
+        );
+        assert!(!state
+            .events
+            .iter()
+            .any(|event| event.kind == EventKind::Departure));
     }
 
     #[test]
