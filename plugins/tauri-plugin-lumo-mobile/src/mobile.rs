@@ -8,8 +8,9 @@ use tauri::plugin::PluginHandle;
 use tauri::{AppHandle, Runtime};
 
 use crate::models::{
-    CredentialLoadResponse, DeviceCredential, MobileStatus, NotificationPayload, PhonePayload,
-    RolePayload, TrackingPayload,
+    AddressResponse, CoordinatesPayload, CredentialLoadResponse, DeviceCredential,
+    EmergencyAlarmPayload, MobileStatus, NotificationPayload, PendingAlarm, PendingAlarmResponse,
+    PhonePayload, RolePayload, TrackingPayload,
 };
 #[cfg(not(target_os = "android"))]
 use crate::Error;
@@ -101,13 +102,24 @@ impl<R: Runtime> LumoMobile<R> {
             TrackingPayload {
                 role,
                 enabled,
-                interval_seconds: interval_seconds.clamp(15, 900),
+                interval_seconds: interval_seconds.clamp(5, 900),
             },
         )
     }
 
     pub fn open_phone_dialer(&self, number: &str) -> Result<()> {
         self.run("openPhoneDialer", PhonePayload { number })
+    }
+
+    pub fn reverse_geocode(&self, latitude: f64, longitude: f64) -> Result<Option<String>> {
+        self.run::<AddressResponse>(
+            "reverseGeocode",
+            CoordinatesPayload {
+                latitude,
+                longitude,
+            },
+        )
+        .map(|response| response.address)
     }
 
     pub fn show_notification(
@@ -126,6 +138,33 @@ impl<R: Runtime> LumoMobile<R> {
                 urgent,
             },
         )
+    }
+
+    pub fn start_emergency_alarm(
+        &self,
+        id: &str,
+        title: &str,
+        body: &str,
+        phone: Option<&str>,
+    ) -> Result<()> {
+        self.run(
+            "startEmergencyAlarm",
+            EmergencyAlarmPayload {
+                id,
+                title,
+                body,
+                phone,
+            },
+        )
+    }
+
+    pub fn pending_alarm(&self) -> Result<Option<PendingAlarm>> {
+        self.run::<PendingAlarmResponse>("getPendingAlarm", ())
+            .map(|response| response.alarm)
+    }
+
+    pub fn stop_emergency_alarm(&self) -> Result<()> {
+        self.run("stopEmergencyAlarm", ())
     }
 
     pub fn open_battery_settings(&self) -> Result<()> {

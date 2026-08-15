@@ -1,5 +1,5 @@
 use tauri::{AppHandle, Runtime, State};
-use tauri_plugin_lumo_mobile::{LumoMobileExt, MobileStatus};
+use tauri_plugin_lumo_mobile::{LumoMobileExt, MobileStatus, PendingAlarm};
 
 use crate::{
     commands::error::{CommandError, CommandResult},
@@ -77,6 +77,33 @@ pub fn mobile_open_phone_dialer(app: AppHandle, number: String) -> CommandResult
         .map_err(bridge_error)
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct ReverseGeocodeView {
+    address: Option<String>,
+}
+
+#[tauri::command]
+pub fn mobile_reverse_geocode(
+    app: AppHandle,
+    latitude: f64,
+    longitude: f64,
+) -> CommandResult<ReverseGeocodeView> {
+    if !latitude.is_finite()
+        || !(-90.0..=90.0).contains(&latitude)
+        || !longitude.is_finite()
+        || !(-180.0..=180.0).contains(&longitude)
+    {
+        return Err(CommandError {
+            code: "invalid_input",
+            message: "invalid coordinates".to_owned(),
+        });
+    }
+    app.lumo_mobile()
+        .reverse_geocode(latitude, longitude)
+        .map(|address| ReverseGeocodeView { address })
+        .map_err(bridge_error)
+}
+
 #[tauri::command]
 pub fn mobile_show_notification(
     app: AppHandle,
@@ -87,6 +114,47 @@ pub fn mobile_show_notification(
 ) -> CommandResult<()> {
     app.lumo_mobile()
         .show_notification(id.as_deref(), &title, &body, urgent.unwrap_or(false))
+        .map_err(bridge_error)
+}
+
+#[tauri::command]
+pub fn mobile_start_emergency_alarm(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+    id: String,
+    title: String,
+    body: String,
+    phone: Option<String>,
+) -> CommandResult<()> {
+    state.1.require_controller()?;
+    if id.trim().is_empty() || title.trim().is_empty() || body.trim().is_empty() {
+        return Err(CommandError {
+            code: "invalid_input",
+            message: "invalid emergency alarm".to_owned(),
+        });
+    }
+    app.lumo_mobile()
+        .start_emergency_alarm(&id, &title, &body, phone.as_deref())
+        .map_err(bridge_error)
+}
+
+#[tauri::command]
+pub fn mobile_get_pending_alarm(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+) -> CommandResult<Option<PendingAlarm>> {
+    state.1.require_controller()?;
+    app.lumo_mobile().pending_alarm().map_err(bridge_error)
+}
+
+#[tauri::command]
+pub fn mobile_stop_emergency_alarm(
+    app: AppHandle,
+    state: State<'_, BackendState>,
+) -> CommandResult<()> {
+    state.1.require_controller()?;
+    app.lumo_mobile()
+        .stop_emergency_alarm()
         .map_err(bridge_error)
 }
 

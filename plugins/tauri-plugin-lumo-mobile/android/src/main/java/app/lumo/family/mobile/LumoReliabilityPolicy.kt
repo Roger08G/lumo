@@ -80,7 +80,6 @@ internal object LumoRestartPolicy {
         notificationsGranted: Boolean,
         preciseLocationGranted: Boolean,
         backgroundLocationGranted: Boolean,
-        locationServicesEnabled: Boolean,
     ): LumoRestartAction {
         if (!enabled || !notificationsGranted) return LumoRestartAction.IGNORE
         return when (role) {
@@ -88,8 +87,7 @@ internal object LumoRestartPolicy {
             LumoServiceController.ROLE_CONTROLLED -> {
                 if (
                     preciseLocationGranted &&
-                        backgroundLocationGranted &&
-                        locationServicesEnabled
+                        backgroundLocationGranted
                 ) {
                     LumoRestartAction.START
                 } else {

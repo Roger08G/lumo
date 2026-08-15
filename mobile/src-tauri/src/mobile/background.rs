@@ -6,7 +6,7 @@ use jni::{
     JNIEnv,
 };
 use lumo_core::{
-    application::ReportLocationInput,
+    application::{ReportLocationInput, SetTrackingInput},
     domain::{Connectivity, EventKind, RuntimeProfile},
 };
 use lumo_runtime::{ConfiguredRepository, LocalBackend, RuntimeConfig, SystemClock};
@@ -22,6 +22,12 @@ struct BackgroundTick {
     timestamp_ms: i64,
     data_dir: PathBuf,
     battery_percent: u8,
+    #[serde(default)]
+    precise_location_granted: bool,
+    #[serde(default)]
+    background_location_granted: bool,
+    #[serde(default)]
+    battery_optimization_disabled: bool,
     location: Option<BackgroundLocation>,
     device_credential: Option<StoredDeviceCredential>,
 }
@@ -49,6 +55,7 @@ struct BackgroundNotification {
     title: String,
     body: String,
     urgent: bool,
+    phone: Option<String>,
 }
 
 #[no_mangle]
@@ -152,6 +159,22 @@ fn process_tick(payload: String) -> Result<String, BackgroundFailure> {
     let backend = LocalBackend::new(repository, SystemClock);
 
     let mut snapshot = if profile == RuntimeProfile::Controlled {
+        let current = backend
+            .snapshot(profile)
+            .map_err(background_runtime_error)?;
+        if !current.controlled.tracking_enabled
+            && tick.precise_location_granted
+            && tick.background_location_granted
+        {
+            backend
+                .set_tracking(SetTrackingInput {
+                    precise_permission: lumo_core::domain::PermissionState::Granted,
+                    background_permission: lumo_core::domain::PermissionState::Granted,
+                    battery_optimization_disabled: tick.battery_optimization_disabled,
+                    enabled: true,
+                })
+                .map_err(background_runtime_error)?;
+        }
         if let Some(location) = tick.location {
             backend
                 .report_location(ReportLocationInput {
@@ -185,13 +208,18 @@ fn process_tick(payload: String) -> Result<String, BackgroundFailure> {
         && snapshot
             .controlled
             .last_seen_at_ms
-            .is_some_and(|last_seen| tick.timestamp_ms.saturating_sub(last_seen) > 120_000)
+            .is_some_and(|last_seen| tick.timestamp_ms.saturating_sub(last_seen) > 300_000)
     {
         snapshot = backend
             .set_connectivity(Connectivity::Offline)
             .map_err(background_runtime_error)?;
     }
 
+    let help_phone = snapshot
+        .session
+        .as_ref()
+        .map(|session| session.tracked_person_phone.clone())
+        .filter(|phone| !phone.trim().is_empty());
     let notifications = if profile == RuntimeProfile::Controller {
         snapshot
             .events
@@ -206,11 +234,15 @@ fn process_tick(payload: String) -> Result<String, BackgroundFailure> {
                             | EventKind::Help
                     )
             })
-            .map(|event| BackgroundNotification {
-                id: event.id,
-                title: event.title,
-                body: event.detail,
-                urgent: event.kind == EventKind::Help,
+            .map(|event| {
+                let urgent = event.kind == EventKind::Help;
+                BackgroundNotification {
+                    id: event.id,
+                    title: event.title,
+                    body: event.detail,
+                    urgent,
+                    phone: urgent.then(|| help_phone.clone()).flatten(),
+                }
             })
             .collect()
     } else {

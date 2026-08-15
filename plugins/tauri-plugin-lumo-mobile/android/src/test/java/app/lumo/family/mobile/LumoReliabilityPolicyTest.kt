@@ -120,7 +120,6 @@ class LumoReliabilityPolicyTest {
                 notificationsGranted = true,
                 preciseLocationGranted = false,
                 backgroundLocationGranted = false,
-                locationServicesEnabled = false,
             ),
         )
     }
@@ -136,10 +135,6 @@ class LumoReliabilityPolicyTest {
             controlledRestartAction(backgroundLocationGranted = false),
         )
         assertEquals(
-            LumoRestartAction.SHOW_REOPEN,
-            controlledRestartAction(locationServicesEnabled = false),
-        )
-        assertEquals(
             LumoRestartAction.IGNORE,
             controlledRestartAction(enabled = false),
         )
@@ -153,7 +148,6 @@ class LumoReliabilityPolicyTest {
         enabled: Boolean = true,
         notificationsGranted: Boolean = true,
         backgroundLocationGranted: Boolean = true,
-        locationServicesEnabled: Boolean = true,
     ): LumoRestartAction =
         LumoRestartPolicy.action(
             enabled = enabled,
@@ -161,6 +155,5 @@ class LumoReliabilityPolicyTest {
             notificationsGranted = notificationsGranted,
             preciseLocationGranted = true,
             backgroundLocationGranted = backgroundLocationGranted,
-            locationServicesEnabled = locationServicesEnabled,
         )
 }

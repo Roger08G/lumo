@@ -17,7 +17,6 @@ internal class LumoBootReceiver : BroadcastReceiver() {
                 backgroundLocationGranted =
                     LumoDeviceStatus.backgroundLocationStatus(context) in
                         setOf("granted", "notRequired"),
-                locationServicesEnabled = LumoDeviceStatus.locationServicesEnabled(context),
             )
         ) {
             LumoRestartAction.START -> {
