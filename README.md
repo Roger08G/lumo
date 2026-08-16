@@ -21,6 +21,8 @@
 
 Lumo es una aplicación de seguimiento familiar con tres experiencias: **controlador**, **controlado** y **debug local**. El diseño está pensado para que una persona mayor pueda consultar una ubicación, recibir avisos de llegada y pedir ayuda sin navegar por menús complejos.
 
+![banner](./images/banner.png)
+
 ## Funciones
 
 - Emparejamiento mediante QR de un solo uso y PIN de seis cifras.
