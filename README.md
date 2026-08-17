@@ -23,6 +23,8 @@ Lumo es una aplicación de seguimiento familiar con tres experiencias: **control
 
 ![banner](./images/banner.png)
 
+> Lumo no sustituye a los servicios de emergencia ni a un sistema médico. La disponibilidad de ubicación en segundo plano depende de Android, de los permisos concedidos, de la batería y de las políticas de ahorro de energía del fabricante.
+
 ## Funciones
 
 - Emparejamiento mediante QR de un solo uso y PIN de seis cifras.
@@ -123,6 +125,3 @@ GitHub Actions ejecuta Frontend, Rust y Container en cada push y pull request. D
 ## Licencia
 
 Lumo se distribuye bajo los términos de [`LICENSE`](LICENSE).
-
-> Lumo no sustituye a los servicios de emergencia ni a un sistema médico. La disponibilidad de ubicación en segundo plano depende de Android, de los permisos concedidos, de la batería y de las políticas de ahorro de energía del fabricante.
-
