@@ -38,4 +38,4 @@ tauri-plugin-barcode-scanner = "2.4.5"
 tauri-plugin-geolocation = "2.3.2"
 
 [target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
+jni = "0.22"
