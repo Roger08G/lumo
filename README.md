@@ -21,7 +21,7 @@
 
 Lumo es una aplicación de seguimiento familiar con tres experiencias: **controlador**, **controlado** y **debug local**. El diseño está pensado para que una persona mayor pueda consultar una ubicación, recibir avisos de llegada y pedir ayuda sin navegar por menús complejos.
 
-![banner](./images/banner.png)
+![Vista previa de Lumo](./images/banner.png)
 
 > Lumo no sustituye a los servicios de emergencia ni a un sistema médico. La disponibilidad de ubicación en segundo plano depende de Android, de los permisos concedidos, de la batería y de las políticas de ahorro de energía del fabricante.
 
@@ -116,11 +116,13 @@ cd mobile
 bun run tauri android dev
 ```
 
-La release oficial se publica en [GitHub Releases](https://github.com/Roger08G/lumo/releases) con APK firmado, código fuente y SHA-256. El APK distribuido actualmente se construye para `arm64-v8a`; comprueba la arquitectura del teléfono antes de instalarlo.
+La release pública se publica en [GitHub Releases](https://github.com/Roger08G/lumo/releases) únicamente como código fuente verificable. No se distribuyen APK precompilados desde este repositorio para evitar que una compilación pueda incorporar un endpoint privado o una configuración local.
+
+Si generas tu propio APK, declara sólo `LUMO_RUNTIME_MODE=remote` y el origen HTTPS público en `LUMO_API_URL`. Nunca proporciones al proceso de compilación la clave maestra del servidor, tokens de dispositivo, PIN, certificados, keystores ni el archivo `.env` de producción completo.
 
 ## CI y dependencias
 
-GitHub Actions ejecuta Frontend, Rust y Container en cada push y pull request. Dependabot propone actualizaciones semanalmente; los saltos mayores se aceptan sólo cuando pasan los tres jobs y se revisan sus cambios de API.
+GitHub Actions ejecuta Frontend, Rust, Container y detección de secretos en cada push y pull request. Dependabot propone actualizaciones semanalmente; los saltos mayores se aceptan sólo cuando pasan todos los jobs y se revisan sus cambios de API.
 
 ## Licencia
 
