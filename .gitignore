@@ -7,9 +7,20 @@
 /certs/
 /.ci-certs/
 /backups/
-/lumo-*.apk
+*.apk
+*.aab
 *.idsig
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.crt
+*.cer
 
+*.db
+*.sqlite
+*.sqlite3
 *.db-shm
 *.db-wal
 *.key
