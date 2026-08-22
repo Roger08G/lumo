@@ -38,17 +38,47 @@ Lumo es una aplicación de seguimiento familiar con tres experiencias: **control
 
 ## Arquitectura
 
-```text
-Lumo
-├── mobile/                         Tauri + React + Emotion
-│   └── src-tauri/                  comandos, autorización y puente Android
-├── plugins/tauri-plugin-lumo-mobile puente Kotlin, ubicación y Android Keystore
-├── crates/lumo-core/               dominio, PIN, geocercas y eventos
-├── crates/lumo-protocol/           contrato v2, credenciales y sobres cifrados
-├── crates/lumo-runtime/            SQLite local, HTTPS y flujos de emparejamiento
-├── crates/lumo-api/                API Axum multi-grupo con SQLite
-├── scripts/                        gates locales y despliegue reproducible
-└── docs/                           backend local y despliegue del servidor
+```mermaid
+flowchart LR
+    subgraph ANDROID["APK Lumo · Android"]
+        UI["React + Emotion<br/>Controlador · Controlado · Debug<br/>mobile/"]
+        TAURI["Tauri + comandos Rust<br/>Autorización y estado<br/>mobile/src-tauri/"]
+        NATIVE["Plugin Kotlin<br/>Ubicación · Geocercas · Notificaciones · Keystore<br/>plugins/tauri-plugin-lumo-mobile/"]
+
+        UI <-->|"comandos y eventos"| TAURI
+        TAURI <-->|"puente móvil"| NATIVE
+    end
+
+    subgraph RUST["Workspace Rust compartido"]
+        CORE["Dominio y reglas<br/>PIN · Roles · Geocercas · Eventos<br/>crates/lumo-core/"]
+        PROTOCOL["Protocolo v2<br/>Credenciales · Firmas · Sobres cifrados<br/>crates/lumo-protocol/"]
+        RUNTIME["Runtime del cliente<br/>Caché cifrada · HTTPS · Emparejamiento<br/>crates/lumo-runtime/"]
+
+        CORE --> PROTOCOL
+        CORE --> RUNTIME
+        PROTOCOL --> RUNTIME
+    end
+
+    subgraph SERVER["VPS · Docker"]
+        API["API Axum<br/>Autorización · Cuotas · Replay protection<br/>crates/lumo-api/"]
+        DB[("SQLite<br/>Estado cifrado y retención limitada")]
+
+        API <--> DB
+    end
+
+    TAURI --> CORE
+    TAURI --> PROTOCOL
+    TAURI --> RUNTIME
+    RUNTIME <-->|"HTTPS + mensajes cifrados"| API
+    API --> CORE
+    API --> PROTOCOL
+
+    classDef mobile fill:#f3edff,stroke:#7650b3,color:#2f2938,stroke-width:1.5px;
+    classDef rust fill:#fff4e8,stroke:#c8752d,color:#382d25,stroke-width:1.5px;
+    classDef server fill:#eaf7f1,stroke:#3d8a70,color:#24362f,stroke-width:1.5px;
+    class UI,TAURI,NATIVE mobile;
+    class CORE,PROTOCOL,RUNTIME rust;
+    class API,DB server;
 ```
 
 El frontend sólo presenta snapshots. La autoridad para grupos, roles, PIN, invitaciones y estado remoto está en Rust y en la API. Un dispositivo controlado nunca recibe la clave del estado canónico del controlador: envía operaciones tipadas y cifradas.
