@@ -51,7 +51,7 @@ const PENDING_OPERATION_VERSION: u8 = 1;
 const PENDING_OPERATION_FILE_NAME: &str = "pending-controlled-operation.json";
 const MEMBER_OPERATION_TTL_MS: i64 = 5 * 60 * 1_000;
 
-type RemoteStateKey = (String, String, u64);
+type RemoteStateKey = (String, String, String, u64);
 type SharedRemoteStates = Mutex<HashMap<RemoteStateKey, Arc<SharedRemoteState>>>;
 
 static HTTPS_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
@@ -79,6 +79,7 @@ pub struct RemoteMemberLoad {
 #[derive(Debug, Default)]
 struct SharedRemoteState {
     cache: Mutex<Option<CachedRecord>>,
+    controller_operation: Mutex<()>,
     controlled_operation: Mutex<()>,
 }
 
@@ -182,6 +183,10 @@ impl RemoteRepository {
         self.credentials.get()
     }
 
+    pub fn api_origin(&self) -> &str {
+        &self.base_url
+    }
+
     pub fn install_credential(&self, credential: DeviceCredential) -> LumoResult<()> {
         if credential.api_origin() != self.base_url {
             return Err(LumoError::AuthenticationFailed);
@@ -262,6 +267,23 @@ impl RemoteRepository {
     }
 
     pub fn create_invitation(&self, pin: &str, role: DeviceRole) -> LumoResult<InvitationResponse> {
+        self.create_replacement_invitation(pin, role, None)
+    }
+
+    pub fn create_replacement_invitation(
+        &self,
+        pin: &str,
+        role: DeviceRole,
+        replace_device_id: Option<&str>,
+    ) -> LumoResult<InvitationResponse> {
+        if let Some(device_id) = replace_device_id {
+            validate_identifier("device", device_id)?;
+            if role != DeviceRole::Controlled {
+                return Err(LumoError::InvalidInput(
+                    "only a controlled device can be replaced".to_owned(),
+                ));
+            }
+        }
         let context = self.context()?;
         ensure_role(&context.credential, DeviceRole::Controller)?;
         self.authenticated_json(
@@ -271,6 +293,7 @@ impl RemoteRepository {
             &CreateInvitationRequest {
                 pin: pin.to_owned(),
                 role,
+                replace_device_id: replace_device_id.map(str::to_owned),
             },
             false,
         )
@@ -312,7 +335,6 @@ impl RemoteRepository {
 
     pub fn leave_group(&self, pin: &str) -> LumoResult<()> {
         let context = self.context()?;
-        ensure_role(&context.credential, DeviceRole::Controlled)?;
         self.protected_action(
             &context,
             Method::POST,
@@ -501,9 +523,12 @@ impl RemoteRepository {
         &self,
         context: &RemoteContext,
     ) -> LumoResult<Option<RemoteStateRecord>> {
-        if lock_cache(&context.shared.cache).is_none() {
-            if let Ok(Some(cached)) = self.read_persisted_cache(context) {
-                *lock_cache(&context.shared.cache) = Some(cached);
+        {
+            let mut current = lock_cache(&context.shared.cache);
+            if current.is_none() {
+                if let Ok(Some(cached)) = self.read_persisted_cache(context) {
+                    *current = Some(cached);
+                }
             }
         }
         let conditional_etag = lock_cache(&context.shared.cache)
@@ -535,9 +560,7 @@ impl RemoteRepository {
             .json::<CompactRemoteStateRecord>()
             .map_err(response_decode_error)?;
         let record = RemoteStateRecord::try_from(compact)?;
-        self.verify_record(context, &record)?;
-        self.cache_record(context, etag, record.clone())?;
-        Ok(Some(record))
+        self.cache_record(context, etag, record).map(Some)
     }
 
     fn put_record(&self, context: &RemoteContext, request: &PutStateRequest) -> LumoResult<()> {
@@ -562,6 +585,7 @@ impl RemoteRepository {
             Ok(response) => {
                 let response = parse_success(response)?;
                 self.cache_record(context, response_etag(&response), request.record.clone())
+                    .map(|_| ())
             }
             Err(error) => self.confirm_committed(context, request, error),
         }
@@ -817,12 +841,20 @@ impl RemoteRepository {
         context: &RemoteContext,
         etag: Option<String>,
         record: RemoteStateRecord,
-    ) -> LumoResult<()> {
+    ) -> LumoResult<RemoteStateRecord> {
         self.verify_record(context, &record)?;
         let cached = CachedRecord { etag, record };
+        let mut current = lock_cache(&context.shared.cache);
+        if let Some(newer) = current
+            .as_ref()
+            .filter(|current| current.record.revision > cached.record.revision)
+        {
+            return Ok(newer.record.clone());
+        }
         self.write_persisted_cache(context, &cached)?;
-        *lock_cache(&context.shared.cache) = Some(cached);
-        Ok(())
+        let record = cached.record.clone();
+        *current = Some(cached);
+        Ok(record)
     }
 
     fn cache_member_snapshot(
@@ -839,7 +871,7 @@ impl RemoteRepository {
                 .cipher
                 .seal(snapshot, now_ms, i64::MAX.saturating_sub(now_ms))?,
         };
-        self.cache_record(context, etag, record)
+        self.cache_record(context, etag, record).map(|_| ())
     }
 
     fn read_persisted_cache(&self, context: &RemoteContext) -> LumoResult<Option<CachedRecord>> {
@@ -1004,6 +1036,11 @@ impl StateRepository for RemoteRepository {
     {
         let context = self.context()?;
         ensure_role(&context.credential, DeviceRole::Controller)?;
+        let _guard = context
+            .shared
+            .controller_operation
+            .lock()
+            .map_err(|_| LumoError::Storage("controller operation lock poisoned".to_owned()))?;
         // Mutations never hydrate from stale/offline cache: a fresh server CAS is mandatory.
         let current = self.fetch_record_network(&context)?;
         let expected_revision = current.as_ref().map(|record| record.revision);
@@ -1087,6 +1124,7 @@ fn shared_remote_state(credential: &DeviceCredential) -> Arc<SharedRemoteState> 
         .entry((
             credential.api_origin().to_owned(),
             credential.group_id().to_owned(),
+            credential.device_id().to_owned(),
             credential.cache_fingerprint(),
         ))
         .or_insert_with(|| Arc::new(SharedRemoteState::default()))
@@ -1120,6 +1158,7 @@ fn parse_success(response: Response) -> LumoResult<Response> {
     let code = body.as_ref().map(|body| body.code.as_str());
     Err(match (status, code) {
         (StatusCode::UNAUTHORIZED, Some("clock_skew")) => LumoError::ExpiredMessage,
+        (StatusCode::UNAUTHORIZED, Some("credential_rejected")) => LumoError::CredentialRejected,
         (StatusCode::UNAUTHORIZED, Some("authentication_failed")) => {
             LumoError::AuthenticationFailed
         }
@@ -1235,9 +1274,6 @@ fn write_private(path: &Path, bytes: &[u8]) -> LumoResult<()> {
 }
 
 fn replace_file(temporary: &Path, destination: &Path) -> LumoResult<()> {
-    if destination.exists() {
-        fs::remove_file(destination).map_err(storage_error)?;
-    }
     if let Err(error) = fs::rename(temporary, destination) {
         let _ = fs::remove_file(temporary);
         return Err(storage_error(error));
@@ -1288,7 +1324,6 @@ mod tests {
         routing::{get, post},
         Json, Router,
     };
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
     use lumo_core::{
         application::{CreateGroupInput, SetTrackingInput},
         domain::PermissionState,
@@ -1322,6 +1357,51 @@ mod tests {
         let repository = RemoteRepository::new("http://127.0.0.1:3000", Some(credential), true)
             .expect("repository");
         assert!(!format!("{repository:?}").contains(&token));
+    }
+
+    #[test]
+    fn delayed_response_cannot_replace_a_newer_verified_cache() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let credential = credential("http://127.0.0.1:3000", Uuid::new_v4());
+        let repository = RemoteRepository::new_with_cache(
+            "http://127.0.0.1:3000",
+            Some(credential),
+            true,
+            Some(directory.path()),
+        )
+        .expect("repository");
+        let context = repository.context().expect("context");
+        for revision in [2, 1] {
+            let state = RuntimeState {
+                revision,
+                ..RuntimeState::default()
+            };
+            let record = repository.encode(&context, &state).expect("record");
+            let returned = repository
+                .cache_record(&context, Some(format!("etag-{revision}")), record)
+                .expect("cache response");
+            assert_eq!(
+                returned.revision, 2,
+                "callers must also receive the newest verified state"
+            );
+        }
+        assert_eq!(
+            lock_cache(&context.shared.cache)
+                .as_ref()
+                .expect("memory cache")
+                .record
+                .revision,
+            2
+        );
+        assert_eq!(
+            repository
+                .read_persisted_cache(&context)
+                .expect("disk cache")
+                .expect("cache")
+                .record
+                .revision,
+            2
+        );
     }
 
     #[test]
@@ -1661,6 +1741,18 @@ mod tests {
         let base_url = format!("http://{}", listener.local_addr().expect("address"));
         let app = Router::new()
             .route(
+                "/credential",
+                get(|| async {
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        Json(ApiErrorBody {
+                            code: "credential_rejected".to_owned(),
+                            message: "rejected".to_owned(),
+                        }),
+                    )
+                }),
+            )
+            .route(
                 "/authentication",
                 get(|| async {
                     (
@@ -1715,6 +1807,7 @@ mod tests {
                     .expect("HTTP response");
                 parse_success(response).expect_err("error response")
             };
+            assert_eq!(classify("/credential"), LumoError::CredentialRejected);
             assert_eq!(classify("/authentication"), LumoError::AuthenticationFailed);
             assert_eq!(classify("/tracking"), LumoError::TrackingDisabled);
             assert_eq!(classify("/authorization"), LumoError::Unauthorized);

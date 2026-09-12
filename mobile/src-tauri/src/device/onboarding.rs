@@ -60,6 +60,18 @@ impl PendingOnboardingStore {
             {
                 Ok(pending.request_id)
             }
+            Some(pending) if pending.kind == PendingKind::Join => {
+                // Scanning a newly authorized invitation explicitly supersedes the old QR.
+                // Keep retries for each QR idempotent, but do not trap a device behind an
+                // expired invitation when its controller has issued a replacement.
+                let replacement = PendingOnboarding {
+                    kind: PendingKind::Join,
+                    request_id: Uuid::new_v4().to_string(),
+                    invitation_id: Some(invitation_id.to_owned()),
+                };
+                self.replace_unlocked(&replacement)?;
+                Ok(replacement.request_id)
+            }
             Some(_) => Err(pending_conflict()),
             None => self.create_unlocked(PendingKind::Join, Some(invitation_id.to_owned())),
         }
@@ -138,6 +150,21 @@ impl PendingOnboardingStore {
         let temporary = parent.join(format!(".pending-onboarding-{}.tmp", Uuid::new_v4()));
         write_private(&temporary, &bytes)?;
         replace_file(&temporary, self.path.as_ref())
+    }
+
+    fn replace_unlocked(&self, pending: &PendingOnboarding) -> LumoResult<()> {
+        let parent = self.path.parent().ok_or_else(|| {
+            LumoError::Storage("pending onboarding path has no parent".to_owned())
+        })?;
+        let bytes = serde_json::to_vec(pending)
+            .map_err(|error| LumoError::Serialization(error.to_string()))?;
+        let temporary = parent.join(format!(".pending-onboarding-{}.tmp", Uuid::new_v4()));
+        write_private(&temporary, &bytes)?;
+        if let Err(error) = fs::rename(&temporary, self.path.as_ref()) {
+            let _ = fs::remove_file(temporary);
+            return Err(storage_error(error));
+        }
+        Ok(())
     }
 
     fn guard(&self) -> LumoResult<MutexGuard<'_, ()>> {
@@ -238,14 +265,18 @@ mod tests {
         let invitation_id = Uuid::new_v4().to_string();
         let request_id = store.begin_join(&invitation_id).expect("begin join");
         assert_eq!(store.begin_join(&invitation_id).expect("retry"), request_id);
-        assert!(matches!(
-            store.begin_join(&Uuid::new_v4().to_string()),
-            Err(LumoError::InvalidInput(_))
-        ));
-        let text = fs::read_to_string(path).expect("pending file");
+        let text = fs::read_to_string(&path).expect("pending file");
         assert!(text.contains(&invitation_id));
         assert!(!text.contains("token"));
         assert!(!text.contains("pin"));
+        let replacement_id = Uuid::new_v4().to_string();
+        let replacement_request = store.begin_join(&replacement_id).expect("new QR");
+        assert_ne!(replacement_request, request_id);
+        let restarted = PendingOnboardingStore::new(path);
+        assert_eq!(
+            restarted.begin_join(&replacement_id).expect("retry new QR"),
+            replacement_request
+        );
     }
 
     #[test]

@@ -327,7 +327,7 @@ impl BackgroundFailure {
 
 fn background_runtime_error(error: lumo_core::LumoError) -> BackgroundFailure {
     let code = match error {
-        lumo_core::LumoError::AuthenticationFailed => "credential_revoked",
+        lumo_core::LumoError::CredentialRejected => "credential_revoked",
         lumo_core::LumoError::TrackingDisabled => "tracking_disabled",
         lumo_core::LumoError::Unauthorized => "authorization_failed",
         lumo_core::LumoError::RemoteUnavailable
@@ -385,8 +385,12 @@ mod tests {
     #[test]
     fn remote_failures_only_classify_auth_as_terminal() {
         assert_eq!(
-            background_runtime_error(lumo_core::LumoError::AuthenticationFailed).code,
+            background_runtime_error(lumo_core::LumoError::CredentialRejected).code,
             "credential_revoked"
+        );
+        assert_eq!(
+            background_runtime_error(lumo_core::LumoError::AuthenticationFailed).code,
+            "runtime_error"
         );
         assert_eq!(
             background_runtime_error(lumo_core::LumoError::RemoteUnavailable).code,

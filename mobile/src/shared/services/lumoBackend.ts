@@ -10,6 +10,7 @@ import type {
     Place,
 } from "@shared/types/lumo.ts";
 import { parseCoordinates } from "@shared/utils/coordinates.ts";
+import { SnapshotGuard } from "@shared/services/snapshotGuard.ts";
 
 type RuntimeProfile = "controller" | "controlled" | "debug";
 
@@ -85,6 +86,13 @@ export interface InvitationData {
     role: "controller" | "controlled";
 }
 
+export interface DeviceSummary {
+    deviceId: string;
+    deviceName: string;
+    role: "controller" | "controlled";
+    revokedAtMs: number | null;
+}
+
 interface CreatePlaceInput {
     name: string;
     address: string;
@@ -108,7 +116,7 @@ const isMobileNative = () =>
 const OFFLINE_AFTER_MS = 5 * 60_000;
 
 const configuredApiOrigin = (() => {
-    const value = import.meta.env.VITE_LUMO_API_ORIGIN;
+    const value = import.meta.env?.VITE_LUMO_API_ORIGIN;
     if (!value) return null;
     try {
         return new URL(value).origin;
@@ -173,7 +181,7 @@ function hydrate(snapshot: BackendSnapshot): BackendHydration {
         : null;
     const lastSeenAt = snapshot.controlled.lastSeenAtMs;
     const connection =
-        lastSeenAt && Date.now() - lastSeenAt > OFFLINE_AFTER_MS
+        !lastSeenAt || Date.now() - lastSeenAt > OFFLINE_AFTER_MS
             ? "offline"
             : snapshot.controlled.connectivity;
     const location = activePlace
@@ -230,7 +238,9 @@ function hydrate(snapshot: BackendSnapshot): BackendHydration {
                   ? "Está fuera de un lugar habitual"
                   : "Ubicación pendiente",
             sinceLabel: elapsedLabel(lastSeenAt),
-            lastUpdatedAt: new Date(lastSeenAt ?? Date.now()).toISOString(),
+            lastUpdatedAt: new Date(
+                snapshot.controlled.lastLocation?.capturedAtMs ?? lastSeenAt ?? 0,
+            ).toISOString(),
             coordinates: snapshot.controlled.lastLocation
                 ? coordinates(
                       snapshot.controlled.lastLocation.latitude,
@@ -277,17 +287,29 @@ function toCreatePlaceInput(place: Place): CreatePlaceInput {
         address: place.address,
         latitude: parsed.latitude,
         longitude: parsed.longitude,
-        radiusM: 50,
+        radiusM: place.radius,
         kind: place.kind,
         color: place.color,
         icon: place.icon,
     };
 }
 
+export class BackendError extends Error {
+    constructor(
+        message: string,
+        readonly code?: string,
+    ) {
+        super(message);
+        this.name = "BackendError";
+    }
+}
+
 function readableError(error: unknown): Error {
     const value = error as { code?: string; message?: string } | null;
     if (value?.message?.includes("already has a controlled device")) {
-        return new Error("Este grupo ya tiene un teléfono controlado");
+        return new Error(
+            "Este grupo ya tiene un teléfono controlado. El supervisor puede crear una invitación para reconectarlo o sustituirlo",
+        );
     }
     const messages: Record<string, string> = {
         unauthorized: "El PIN no es correcto",
@@ -295,20 +317,53 @@ function readableError(error: unknown): Error {
         invalid_invitation: "La invitación no es válida o ya se ha utilizado",
         revision_conflict: "Los datos han cambiado en otro dispositivo. Inténtalo de nuevo",
         authentication_failed: "No se ha podido autenticar con el servidor",
+        credential_rejected:
+            "Este teléfono se ha desvinculado. Solicita una nueva invitación al supervisor",
         remote_unavailable: "El servidor no está disponible",
         configuration_error: "Falta completar la configuración de la API",
+        storage_error:
+            "No se ha podido abrir la configuración segura. Desbloquea el teléfono y vuelve a intentarlo",
+        session_recovery_required:
+            "No se ha podido abrir la configuración guardada. Desbloquea el teléfono y vuelve a intentarlo antes de vincular de nuevo",
     };
-    return new Error(
+    return new BackendError(
         (value?.code && messages[value.code]) ||
             value?.message ||
             "No se ha podido completar la acción",
+        value?.code,
     );
 }
+
+const snapshotGuard = new SnapshotGuard();
+let trackingTransitionTail: Promise<unknown> = Promise.resolve();
+
+function trackingTransition<T>(operation: () => Promise<T>): Promise<T> {
+    const result = trackingTransitionTail.then(operation);
+    trackingTransitionTail = result.catch(() => undefined);
+    return result;
+}
+const snapshotMutations = new Set([
+    "group_create",
+    "group_consume_invitation",
+    "group_leave",
+    "app_reset_local_session",
+    "place_create",
+    "place_update",
+    "place_delete",
+    "tracker_set_tracking",
+    "tracker_report_location",
+    "tracker_send_help",
+    "tracker_process_pending",
+    "events_mark_read",
+    "debug_apply_scenario",
+]);
 
 async function nativeInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T | null> {
     if (!isNative()) return null;
     try {
-        return await invoke<T>(command, args);
+        return await (snapshotMutations.has(command)
+            ? snapshotGuard.mutate(() => invoke<T>(command, args))
+            : invoke<T>(command, args));
     } catch (error) {
         throw readableError(error);
     }
@@ -350,6 +405,9 @@ export const lumoBackend = {
         } catch {
             throw new Error("El código QR no contiene una invitación válida");
         }
+        if (!invitation || typeof invitation !== "object" || Array.isArray(invitation)) {
+            throw new Error("El código QR no contiene una invitación válida");
+        }
         const value = invitation as {
             version?: number;
             kind?: string;
@@ -389,9 +447,11 @@ export const lumoBackend = {
     },
 
     async bootstrap(mode: AppMode | null) {
-        const snapshot = await nativeInvoke<BackendSnapshot>("app_bootstrap", {
-            profile: profileForMode(mode),
-        });
+        const snapshot = await snapshotGuard.read(() =>
+            nativeInvoke<BackendSnapshot>("app_bootstrap", {
+                profile: profileForMode(mode),
+            }),
+        );
         return snapshot ? hydrate(snapshot) : null;
     },
 
@@ -419,16 +479,31 @@ export const lumoBackend = {
             pin,
         });
         if (!verified) return null;
+        if (!verified.verified) throw new Error("No se ha podido verificar la invitación");
         return this.bootstrap(verified.role === "controller" ? "controller" : "tracker");
     },
 
     async verifyPin(pin: string) {
+        if (!/^\d{6}$/.test(pin)) throw new Error("Introduce las 6 cifras del PIN");
         const verified = await nativeInvoke<{ verified: boolean }>("group_verify_pin", { pin });
-        return verified?.verified ?? /^\d{6}$/.test(pin);
+        if (isNative() && verified?.verified !== true) throw new Error("El PIN no es correcto");
+        return true;
     },
 
-    async createInvitation(pin: string, role: "controller" | "controlled") {
-        return nativeInvoke<InvitationData>("group_create_invitation", { pin, role });
+    async createInvitation(
+        pin: string,
+        role: "controller" | "controlled",
+        replaceDeviceId?: string,
+    ) {
+        return nativeInvoke<InvitationData>("group_create_invitation", {
+            pin,
+            role,
+            replaceDeviceId,
+        });
+    },
+
+    async listDevices() {
+        return nativeInvoke<DeviceSummary[]>("group_list_devices");
     },
 
     async leaveGroup(pin: string) {
@@ -436,7 +511,11 @@ export const lumoBackend = {
         // native credential, queue and tracking service atomically. Stopping
         // Android here would leave a still-paired device untracked whenever
         // the PIN is rejected or the API is temporarily unavailable.
-        await nativeInvoke("group_leave", { pin });
+        await trackingTransition(() => nativeInvoke("group_leave", { pin }));
+    },
+
+    async resetLocalSession() {
+        await trackingTransition(() => nativeInvoke("app_reset_local_session"));
     },
 
     async savePlace(place: Place, editing: boolean) {
@@ -458,58 +537,60 @@ export const lumoBackend = {
     },
 
     async setControlledTracking(enabled: boolean) {
-        let mobileStatus: MobileRuntimeStatus | null = null;
-        if (isMobileNative()) {
-            mobileStatus = enabled
-                ? await this.requestMobilePermissions("controlled")
-                : await this.getMobileStatus();
-            if (
-                enabled &&
-                (!mobileStatus ||
-                    mobileStatus.preciseLocation !== "granted" ||
-                    mobileStatus.backgroundLocation === "denied" ||
-                    !mobileStatus.locationServicesEnabled)
-            ) {
-                throw new Error("Completa los permisos de ubicación de Android para continuar");
-            }
-        } else if (enabled) {
-            await ensureLocationPermission();
-        }
-
-        const backendSnapshot = await nativeInvoke<BackendSnapshot>("tracker_set_tracking", {
-            input: {
-                precisePermission:
-                    mobileStatus?.preciseLocation === "denied" ? "revoked" : "granted",
-                backgroundPermission:
-                    mobileStatus?.backgroundLocation === "denied" ? "revoked" : "granted",
-                batteryOptimizationDisabled: mobileStatus?.batteryOptimizationDisabled ?? true,
-                enabled,
-            },
-        });
-
-        try {
+        return trackingTransition(async () => {
+            let mobileStatus: MobileRuntimeStatus | null = null;
             if (isMobileNative()) {
-                mobileStatus = await this.configureMobileTracking("controlled", enabled);
+                mobileStatus = enabled
+                    ? await this.requestMobilePermissions("controlled")
+                    : await this.getMobileStatus();
+                if (
+                    enabled &&
+                    (!mobileStatus ||
+                        mobileStatus.preciseLocation !== "granted" ||
+                        mobileStatus.backgroundLocation === "denied" ||
+                        !mobileStatus.locationServicesEnabled)
+                ) {
+                    throw new Error("Completa los permisos de ubicación de Android para continuar");
+                }
+            } else if (enabled) {
+                await ensureLocationPermission();
             }
-        } catch (error) {
-            if (enabled) {
-                await nativeInvoke<BackendSnapshot>("tracker_set_tracking", {
-                    input: {
-                        precisePermission: "granted",
-                        backgroundPermission: "granted",
-                        batteryOptimizationDisabled:
-                            mobileStatus?.batteryOptimizationDisabled ?? false,
-                        enabled: false,
-                    },
-                }).catch(() => undefined);
-            }
-            throw error;
-        }
 
-        return {
-            status: mobileStatus,
-            snapshot: backendSnapshot ? hydrate(backendSnapshot) : null,
-        };
+            const backendSnapshot = await nativeInvoke<BackendSnapshot>("tracker_set_tracking", {
+                input: {
+                    precisePermission:
+                        mobileStatus?.preciseLocation === "denied" ? "revoked" : "granted",
+                    backgroundPermission:
+                        mobileStatus?.backgroundLocation === "denied" ? "revoked" : "granted",
+                    batteryOptimizationDisabled: mobileStatus?.batteryOptimizationDisabled ?? true,
+                    enabled,
+                },
+            });
+
+            try {
+                if (isMobileNative()) {
+                    mobileStatus = await this.configureMobileTracking("controlled", enabled);
+                }
+            } catch (error) {
+                if (enabled) {
+                    await nativeInvoke<BackendSnapshot>("tracker_set_tracking", {
+                        input: {
+                            precisePermission: "granted",
+                            backgroundPermission: "granted",
+                            batteryOptimizationDisabled:
+                                mobileStatus?.batteryOptimizationDisabled ?? false,
+                            enabled: false,
+                        },
+                    }).catch(() => undefined);
+                }
+                throw error;
+            }
+
+            return {
+                status: mobileStatus,
+                snapshot: backendSnapshot ? hydrate(backendSnapshot) : null,
+            };
+        });
     },
 
     async getMobileStatus() {

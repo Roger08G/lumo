@@ -7,6 +7,8 @@
 *.css text eol=lf
 *.html text eol=lf
 *.js text eol=lf
+*.kt text eol=lf
+*.kts text eol=lf
 *.json text eol=lf
 *.lock text eol=lf
 *.md text eol=lf

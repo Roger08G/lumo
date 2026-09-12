@@ -2,7 +2,7 @@ use std::{
     fmt, fs,
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use lumo_core::{LumoError, LumoResult};
@@ -14,16 +14,19 @@ use super::{DeviceCredential, StoredDeviceCredential};
 #[derive(Debug, Clone)]
 pub struct FileCredentialStore {
     path: Arc<PathBuf>,
+    lock: Arc<Mutex<()>>,
 }
 
 impl FileCredentialStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: Arc::new(path.into()),
+            lock: Arc::new(Mutex::new(())),
         }
     }
 
     pub fn load(&self) -> LumoResult<Option<StoredDeviceCredential>> {
+        let _guard = self.guard()?;
         let bytes = match fs::read(self.path.as_ref()) {
             Ok(bytes) => Zeroizing::new(bytes),
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
@@ -35,6 +38,7 @@ impl FileCredentialStore {
     }
 
     pub fn store(&self, credential: &DeviceCredential) -> LumoResult<()> {
+        let _guard = self.guard()?;
         let parent = self
             .path
             .parent()
@@ -51,11 +55,18 @@ impl FileCredentialStore {
     }
 
     pub fn clear(&self) -> LumoResult<()> {
+        let _guard = self.guard()?;
         match fs::remove_file(self.path.as_ref()) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
             Err(error) => Err(storage_error(error)),
         }
+    }
+
+    fn guard(&self) -> LumoResult<MutexGuard<'_, ()>> {
+        self.lock
+            .lock()
+            .map_err(|_| LumoError::Storage("device credential lock poisoned".to_owned()))
     }
 }
 
@@ -68,14 +79,17 @@ fn write_private(path: &Path, bytes: &[u8]) -> LumoResult<()> {
         options.mode(0o600);
     }
     let mut file = options.open(path).map_err(storage_error)?;
-    file.write_all(bytes).map_err(storage_error)?;
-    file.sync_all().map_err(storage_error)
+    let result = file.write_all(bytes).and_then(|()| file.sync_all());
+    drop(file);
+    if result.is_err() {
+        let _ = fs::remove_file(path);
+    }
+    result.map_err(storage_error)
 }
 
 fn replace_file(temporary: &Path, destination: &Path) -> LumoResult<()> {
-    if destination.exists() {
-        fs::remove_file(destination).map_err(storage_error)?;
-    }
+    // Same-directory rename replaces an existing file atomically on Windows and Unix.
+    // Never unlink the only durable credential before installing its replacement.
     if let Err(error) = fs::rename(temporary, destination) {
         let _ = fs::remove_file(temporary);
         return Err(storage_error(error));
@@ -115,7 +129,21 @@ mod tests {
         assert_eq!(restored.group_id, credential.group_id());
         assert_eq!(restored.device_id, credential.device_id());
         assert_eq!(restored.role, credential.role());
+        store.store(&credential).expect("atomic overwrite");
+        assert!(store.load().expect("replacement load").is_some());
         store.clear().expect("clear credential");
         assert!(store.load().expect("empty after clear").is_none());
+    }
+
+    #[test]
+    fn failed_atomic_replacement_preserves_the_existing_credential() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let destination = directory.path().join("credential.json");
+        fs::write(&destination, b"original credential").expect("existing credential");
+        assert!(replace_file(&directory.path().join("missing.tmp"), &destination).is_err());
+        assert_eq!(
+            fs::read(destination).expect("preserved credential"),
+            b"original credential"
+        );
     }
 }

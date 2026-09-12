@@ -13,7 +13,7 @@ import {
 import { QRCodeSVG } from "qrcode.react";
 
 import { useLumo } from "@app/state/lumoContext.ts";
-import { Button, Field, Modal, Pill } from "@shared/components/ui.tsx";
+import { Button, Field, Modal, Pill, Toggle } from "@shared/components/ui.tsx";
 import type { InvitationData } from "@shared/services/lumoBackend.ts";
 import lumoLogo from "@tauri/icons/icon.png";
 
@@ -33,6 +33,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
     const [loading, setLoading] = useState(false);
     const [invitation, setInvitation] = useState<InvitationData | null>(null);
     const [inviteRole, setInviteRole] = useState<"controller" | "controlled">("controlled");
+    const [replaceControlled, setReplaceControlled] = useState(false);
 
     useEffect(() => {
         if (action) return;
@@ -43,14 +44,17 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
         setLoading(false);
         setInvitation(null);
         setInviteRole("controlled");
+        setReplaceControlled(false);
     }, [action]);
 
     const close = () => {
+        if (loading) return;
         onClose();
     };
 
     const verify = async (event: FormEvent) => {
         event.preventDefault();
+        if (loading || !action) return;
         if (!/^\d{6}$/.test(pin)) {
             setError("Introduce las 6 cifras del PIN");
             return;
@@ -60,12 +64,24 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
             await backend.verifyPin(pin);
             if (action === "leave") {
                 await backend.leaveGroup(pin);
-                close();
-                window.setTimeout(() => dispatch({ type: "LEAVE_GROUP" }), 220);
+                dispatch({ type: "LEAVE_GROUP" });
+                onClose();
                 return;
             }
 
-            const created = await backend.createInvitation(pin, inviteRole);
+            let replaceDeviceId: string | undefined;
+            if (inviteRole === "controlled" && replaceControlled) {
+                const devices = await backend.listDevices();
+                replaceDeviceId = devices?.find(
+                    (device) => device.role === "controlled" && device.revokedAtMs === null,
+                )?.deviceId;
+                if (backend.isNative() && !replaceDeviceId) {
+                    throw new Error(
+                        "No hay un teléfono controlado vinculado. Desactiva la sustitución para crear una invitación normal",
+                    );
+                }
+            }
+            const created = await backend.createInvitation(pin, inviteRole, replaceDeviceId);
             const invite =
                 created ??
                 ({
@@ -323,6 +339,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                                 <button
                                     key={option.role}
                                     type="button"
+                                    disabled={loading}
                                     aria-pressed={inviteRole === option.role}
                                     onClick={() => setInviteRole(option.role)}
                                     css={css({
@@ -358,6 +375,17 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                             ))}
                         </fieldset>
                     )}
+                    {isInvite &&
+                        inviteRole === "controlled" &&
+                        state.group.role === "supervisor" && (
+                            <Toggle
+                                label="Reconectar o sustituir el teléfono controlado"
+                                description="Al usar este QR y el PIN, el nuevo teléfono sustituirá al anterior. El anterior dejará de compartir ubicación."
+                                checked={replaceControlled}
+                                disabled={loading}
+                                onChange={setReplaceControlled}
+                            />
+                        )}
                     <Field
                         type="password"
                         inputMode="numeric"
@@ -368,6 +396,7 @@ export function GroupSecurityModal({ action, onClose }: GroupSecurityModalProps)
                         icon={FiLock}
                         maxLength={6}
                         value={pin}
+                        disabled={loading}
                         error={error}
                         onChange={(event) => {
                             setPin(event.target.value.replace(/\D/g, "").slice(0, 6));

@@ -192,8 +192,8 @@ async fn v2_device_credentials_connect_and_revoke_controller_and_controlled_clie
                 .device_id()
         );
         controller_repository
-            .delete_group(pin)
-            .expect("delete group");
+            .leave_group(pin)
+            .expect("last controller leaves and deletes group");
         assert!(controller_repository
             .credential()
             .expect("credential slot")

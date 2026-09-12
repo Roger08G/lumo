@@ -41,6 +41,7 @@ export function ProtectedActionModal({
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
+        if (loading) return;
         setLoading(true);
         try {
             await backend.verifyPin(pin);
@@ -55,7 +56,14 @@ export function ProtectedActionModal({
     };
 
     return (
-        <Modal open={open} onClose={onClose} eyebrow="Acción protegida" title={title}>
+        <Modal
+            open={open}
+            onClose={() => {
+                if (!loading) onClose();
+            }}
+            eyebrow="Acción protegida"
+            title={title}
+        >
             <form onSubmit={submit} css={css({ display: "grid", gap: 16 })}>
                 <p
                     css={css({
@@ -76,6 +84,7 @@ export function ProtectedActionModal({
                     icon={FiLock}
                     maxLength={6}
                     value={pin}
+                    disabled={loading}
                     error={error}
                     onChange={(event) => {
                         setPin(event.target.value.replace(/\D/g, "").slice(0, 6));

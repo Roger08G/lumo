@@ -43,6 +43,9 @@ const MASTER_KEY: &str = "test-only-server-master-key-with-at-least-32-bytes";
 const PIN: &str = "123456";
 static NONCE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+#[path = "api_flow/recovery.rs"]
+mod recovery;
+
 #[tokio::test]
 async fn health_reports_v2_and_legacy_routes_are_disabled() {
     let directory = tempdir().expect("temporary directory");
@@ -1139,7 +1142,7 @@ fn v2_migration_preserves_legacy_storage_without_exposing_it() {
             |row| row.get(0),
         )
         .expect("v2 table");
-    assert_eq!(version, 5);
+    assert_eq!(version, 6);
     assert_eq!(legacy_rows, 1);
     assert_eq!(v2_tables, 3);
 }
@@ -1198,7 +1201,7 @@ async fn schema_v3_migrates_pin_guards_and_bootstrap_reservations_without_data_l
             |row| row.get(0),
         )
         .expect("existing group");
-    assert_eq!(version, 5);
+    assert_eq!(version, 6);
     assert_eq!(new_tables, 2);
     assert_eq!(existing_group, 1);
 }
@@ -1336,6 +1339,7 @@ async fn create_invitation_with_role(
             &CreateInvitationRequest {
                 pin: PIN.to_owned(),
                 role,
+                replace_device_id: None,
             },
             controller,
         ))

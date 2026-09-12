@@ -119,36 +119,29 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
         }
 
         val context = activity.applicationContext
-        val previous = LumoCredentialVault.load(context)
-        val principalChanged = previous?.samePrincipal(credential) != true
-        if (principalChanged) {
-            // Stop an old scheduler before rotating identity. Pending samples are also tagged and
-            // checked during flush, but clearing on both sides of the write closes the common race.
-            LumoSecureQueue(context).replace(emptyList())
-            LumoPreferences.setTracking(
-                context,
-                enabled = false,
-                role = null,
-                intervalSeconds = LumoPreferences.intervalSeconds(context),
-            )
-            LumoServiceController.stop(context)
-            LumoPreferences.clearControllerNotifications(context)
-            LumoPreferences.clearControlledTrackingChoice(context)
-        }
-        if (!LumoCredentialVault.store(context, credential)) {
-            invoke.reject("Android no ha podido proteger la credencial del dispositivo")
-            return
-        }
-        if (principalChanged) {
-            // Pending coordinates must never cross a group, device, role, or API boundary.
-            LumoSecureQueue(context).replace(emptyList())
-        }
-        invoke.resolve()
+        runCatching {
+            LumoCredentialVault.withLock {
+                val previous = LumoCredentialVault.load(context)
+                val principalChanged = previous?.samePrincipal(credential) != true
+                check(LumoCredentialVault.store(context, credential)) {
+                    "credential persistence failed"
+                }
+                if (principalChanged) resetDeviceRuntime(context)
+            }
+        }.onSuccess { invoke.resolve() }
+            .onFailure {
+                invoke.reject("Android no ha podido proteger la credencial. Vuelve a intentarlo")
+            }
     }
 
     @Command
     fun loadCredential(invoke: Invoke) {
-        val credential = LumoCredentialVault.load(activity.applicationContext)
+        val credential = runCatching {
+            LumoCredentialVault.load(activity.applicationContext)
+        }.getOrElse {
+            invoke.reject("Android no ha podido abrir la credencial. Vuelve a intentarlo")
+            return
+        }
         invoke.resolve(
             JSObject().put(
                 "credential",
@@ -160,7 +153,21 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun clearCredential(invoke: Invoke) {
         val context = activity.applicationContext
-        val cleared = LumoCredentialVault.clear(context)
+        val cleared = runCatching {
+            LumoCredentialVault.withLock {
+                val removed = LumoCredentialVault.clear(context)
+                if (removed) resetDeviceRuntime(context)
+                removed
+            }
+        }.getOrDefault(false)
+        if (cleared) {
+            invoke.resolve()
+        } else {
+            invoke.reject("Android no ha podido borrar la credencial del dispositivo")
+        }
+    }
+
+    private fun resetDeviceRuntime(context: android.content.Context) {
         LumoSecureQueue(context).replace(emptyList())
         LumoPreferences.setTracking(
             context,
@@ -172,11 +179,6 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
         LumoPreferences.clearControlledTrackingChoice(context)
         LumoServiceController.stop(context)
         LumoEmergencyAlarm.clear(context)
-        if (cleared) {
-            invoke.resolve()
-        } else {
-            invoke.reject("Android no ha podido borrar la credencial del dispositivo")
-        }
     }
 
     @Command
@@ -326,9 +328,22 @@ class LumoMobilePlugin(private val activity: Activity) : Plugin(activity) {
 
         val geocoder = Geocoder(activity.applicationContext, Locale.getDefault())
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            geocoder.getFromLocation(args.latitude, args.longitude, 1) { addresses ->
-                resolveAddress(invoke, addresses.firstOrNull())
-            }
+            runCatching {
+                geocoder.getFromLocation(
+                    args.latitude,
+                    args.longitude,
+                    1,
+                    object : Geocoder.GeocodeListener {
+                        override fun onGeocode(addresses: MutableList<Address>) {
+                            resolveAddress(invoke, addresses.firstOrNull())
+                        }
+
+                        override fun onError(errorMessage: String?) {
+                            resolveAddress(invoke, null)
+                        }
+                    },
+                )
+            }.onFailure { resolveAddress(invoke, null) }
         } else {
             Thread {
                 @Suppress("DEPRECATION")
