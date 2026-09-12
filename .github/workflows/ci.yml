@@ -68,6 +68,7 @@ jobs:
             curl \
             file \
             libayatana-appindicator3-dev \
+            libglib2.0-dev \
             librsvg2-dev \
             libssl-dev \
             libwebkit2gtk-4.1-dev \
@@ -87,6 +88,26 @@ jobs:
           grep --fixed-strings 'without rewinding live data' <<<"$rollback_body" >/dev/null
       - name: Verify Rust workspace
         run: ./scripts/verify-local-backend.sh
+      - name: Verify GLib upstream backport and optimized regressions
+        env:
+          RUSTFLAGS: ""
+        run: |
+          python3 vendor/glib/verify_backport.py
+          python3 vendor/glib/test_verify_backport.py
+          cargo test --manifest-path vendor/glib/Cargo.toml --release --locked \
+            --lib --test variant_str_iter_backport --target-dir target/backports
+
+  dependencies:
+    name: Rust dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+      - name: Install pinned audit tool
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit known vulnerabilities and unsound dependencies
+        run: cargo audit --deny unsound --deny yanked
 
   android:
     name: Android

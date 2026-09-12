@@ -82,6 +82,20 @@ export function LumoProvider({ children }: { children: ReactNode }) {
             try {
                 const snapshot = await lumoBackend.bootstrap(state.mode);
                 if (active && snapshot) {
+                    if (
+                        snapshot.group.active &&
+                        snapshot.group.role === "member" &&
+                        lumoBackend.isMobileNative() &&
+                        (!state.group.active || stateRef.current.mobile === null)
+                    ) {
+                        const mobile = await lumoBackend.getMobileStatus();
+                        if (!active) return;
+                        if (!mobile)
+                            throw new Error(
+                                "No se ha podido comprobar la configuración de Android. Vuelve a intentarlo",
+                            );
+                        dispatch({ type: "SYNC_MOBILE_STATUS", payload: mobile });
+                    }
                     bootstrapped.current = true;
                     setBootstrapStatus("ready");
                     setBootstrapError("");
@@ -143,8 +157,8 @@ export function LumoProvider({ children }: { children: ReactNode }) {
                 const current = stateRef.current;
                 const canRecoverTracker =
                     current.group.active &&
-                    current.mode === "tracker" &&
-                    current.preferences.trackerSetupComplete &&
+                    current.group.role === "member" &&
+                    status.controlledTrackingConfigured &&
                     !status.trackingEnabled &&
                     status.controlledTrackingMayAutoRecover &&
                     status.preciseLocation === "granted" &&

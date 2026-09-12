@@ -1,15 +1,21 @@
-use std::{panic, path::PathBuf, ptr};
+use std::path::PathBuf;
+#[cfg(target_os = "android")]
+use std::{panic, ptr};
 
+#[cfg(target_os = "android")]
 use jni::{
     objects::{JClass, JString},
     sys::jstring,
-    JNIEnv,
+    EnvUnowned, Outcome,
 };
 use lumo_core::{
-    application::{ReportLocationInput, SetTrackingInput},
-    domain::{Connectivity, EventKind, RuntimeProfile},
+    application::ReportLocationInput,
+    domain::{AppSnapshot, Connectivity, EventKind, RuntimeProfile},
+    ports::StateRepository,
 };
-use lumo_runtime::{ConfiguredRepository, LocalBackend, RuntimeConfig, SystemClock};
+use lumo_runtime::{
+    ConfiguredRepository, ControlledOperationPort, LocalBackend, RuntimeConfig, SystemClock,
+};
 use lumo_runtime::{DeviceCredential, DeviceRole, RuntimeMode, StoredDeviceCredential};
 use serde::{Deserialize, Serialize};
 
@@ -22,12 +28,6 @@ struct BackgroundTick {
     timestamp_ms: i64,
     data_dir: PathBuf,
     battery_percent: u8,
-    #[serde(default)]
-    precise_location_granted: bool,
-    #[serde(default)]
-    background_location_granted: bool,
-    #[serde(default)]
-    battery_optimization_disabled: bool,
     location: Option<BackgroundLocation>,
     device_credential: Option<StoredDeviceCredential>,
     #[serde(default)]
@@ -64,39 +64,44 @@ struct BackgroundNotification {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_app_lumo_family_mobile_LumoRustBridge_processBackgroundTick(
-    mut environment: JNIEnv<'_>,
-    _class: JClass<'_>,
-    payload: JString<'_>,
+#[cfg(target_os = "android")]
+pub extern "system" fn Java_app_lumo_family_mobile_LumoRustBridge_processBackgroundTick<'local>(
+    mut environment: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    payload: JString<'local>,
 ) -> jstring {
-    let response = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-        let payload = environment
-            .get_string(&payload)
-            .map(|value| value.into())
-            .map_err(|_| BackgroundFailure::new("invalid_payload", "invalid background payload"))?;
-        process_tick(payload)
-    }))
-    .unwrap_or_else(|_| {
-        Err(BackgroundFailure::new(
-            "runtime_error",
-            "background runtime failed safely",
-        ))
-    })
-    .unwrap_or_else(|error| {
-        serde_json::to_string(&BackgroundResponse {
-            notifications: Vec::new(),
-            error: Some(error.message),
-            error_code: Some(error.code.to_owned()),
-        })
+    // jni 0.22 separates the FFI-safe attachment from Env. Enter its guarded
+    // frame before reading/creating Java objects; no panic may cross this boundary.
+    let outcome = environment.with_env(|env| -> jni::errors::Result<JString<'local>> {
+        let response = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            let payload = payload.try_to_string(env).map_err(|_| {
+                BackgroundFailure::new("invalid_payload", "invalid background payload")
+            })?;
+            process_tick(payload)
+        }))
         .unwrap_or_else(|_| {
-            "{\"notifications\":[],\"error\":\"serialization failure\",\"errorCode\":\"runtime_error\"}".to_owned()
+            Err(BackgroundFailure::new(
+                "runtime_error",
+                "background runtime failed safely",
+            ))
         })
+        .unwrap_or_else(|error| {
+            serde_json::to_string(&BackgroundResponse {
+                notifications: Vec::new(),
+                error: Some(error.message),
+                error_code: Some(error.code.to_owned()),
+            })
+            .unwrap_or_else(|_| {
+                "{\"notifications\":[],\"error\":\"serialization failure\",\"errorCode\":\"runtime_error\"}".to_owned()
+            })
+        });
+        JString::from_str(env, response)
     });
-
-    environment
-        .new_string(response)
-        .map(JString::into_raw)
-        .unwrap_or(ptr::null_mut())
+    match outcome.into_outcome() {
+        Outcome::Ok(response) => response.into_raw(),
+        // Keep low-level JNI details and any credential-bearing payload out of logs.
+        Outcome::Err(_) | Outcome::Panic(_) => ptr::null_mut(),
+    }
 }
 
 fn process_tick(payload: String) -> Result<String, BackgroundFailure> {
@@ -164,44 +169,7 @@ fn process_tick(payload: String) -> Result<String, BackgroundFailure> {
     let backend = LocalBackend::new(repository, SystemClock);
 
     let mut snapshot = if profile == RuntimeProfile::Controlled {
-        let current = backend
-            .snapshot(profile)
-            .map_err(background_runtime_error)?;
-        if !current.controlled.tracking_enabled
-            && tick.precise_location_granted
-            && tick.background_location_granted
-        {
-            backend
-                .set_tracking(SetTrackingInput {
-                    precise_permission: lumo_core::domain::PermissionState::Granted,
-                    background_permission: lumo_core::domain::PermissionState::Granted,
-                    battery_optimization_disabled: tick.battery_optimization_disabled,
-                    enabled: true,
-                })
-                .map_err(background_runtime_error)?;
-        }
-        if let Some(location) = tick.location {
-            backend
-                .report_location(ReportLocationInput {
-                    latitude: location.latitude,
-                    longitude: location.longitude,
-                    accuracy_m: location.accuracy,
-                    battery_percent: tick.battery_percent,
-                    captured_at_ms: Some(location.timestamp_ms),
-                })
-                .map_err(background_runtime_error)?
-        } else {
-            let snapshot = backend
-                .snapshot(profile)
-                .map_err(background_runtime_error)?;
-            if snapshot.controlled.tracking_enabled {
-                backend
-                    .set_connectivity(Connectivity::Online)
-                    .map_err(background_runtime_error)?
-            } else {
-                snapshot
-            }
-        }
+        process_controlled_tick(&backend, &tick)?
     } else {
         backend
             .snapshot(profile)
@@ -310,6 +278,37 @@ fn process_tick(payload: String) -> Result<String, BackgroundFailure> {
     .map_err(|_| BackgroundFailure::new("runtime_error", "response serialization failed"))
 }
 
+fn process_controlled_tick<R: StateRepository + ControlledOperationPort + 'static>(
+    backend: &LocalBackend<R>,
+    tick: &BackgroundTick,
+) -> Result<AppSnapshot, BackgroundFailure> {
+    let snapshot = backend
+        .snapshot(RuntimeProfile::Controlled)
+        .map_err(background_runtime_error)?;
+    // Only an explicit activation may enable tracking. A queued tick can outlive the user's
+    // pause or service shutdown, and its old OS-permission flags cannot override that choice.
+    if !snapshot.controlled.tracking_enabled {
+        return Err(background_runtime_error(
+            lumo_core::LumoError::TrackingDisabled,
+        ));
+    }
+    if let Some(location) = &tick.location {
+        backend
+            .report_location(ReportLocationInput {
+                latitude: location.latitude,
+                longitude: location.longitude,
+                accuracy_m: location.accuracy,
+                battery_percent: tick.battery_percent,
+                captured_at_ms: Some(location.timestamp_ms),
+            })
+            .map_err(background_runtime_error)
+    } else {
+        backend
+            .set_connectivity(Connectivity::Online)
+            .map_err(background_runtime_error)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct BackgroundFailure {
     code: &'static str,
@@ -341,7 +340,101 @@ fn background_runtime_error(error: lumo_core::LumoError) -> BackgroundFailure {
 
 #[cfg(test)]
 mod tests {
+    use lumo_core::{
+        application::{CreateGroupInput, SetTrackingInput},
+        domain::PermissionState,
+    };
+    use lumo_runtime::{FixedClock, MemoryRepository};
+
     use super::*;
+
+    fn controlled_backend() -> LocalBackend<MemoryRepository> {
+        let backend = LocalBackend::new(
+            MemoryRepository::default(),
+            FixedClock::new(1_700_000_000_000),
+        );
+        backend
+            .create_group(
+                CreateGroupInput {
+                    name: "Test family".to_owned(),
+                    supervisor_name: "Supervisor".to_owned(),
+                    supervisor_phone: "+34600000001".to_owned(),
+                    tracked_person_name: "Member".to_owned(),
+                    tracked_person_phone: "+34600000002".to_owned(),
+                    pin: "123456".to_owned(),
+                },
+                RuntimeProfile::Controller,
+            )
+            .expect("group");
+        backend
+            .set_tracking(tracking_input(true))
+            .expect("explicit activation");
+        backend
+    }
+
+    fn tracking_input(enabled: bool) -> SetTrackingInput {
+        SetTrackingInput {
+            precise_permission: PermissionState::Granted,
+            background_permission: PermissionState::Granted,
+            battery_optimization_disabled: true,
+            enabled,
+        }
+    }
+
+    #[test]
+    fn an_old_tick_cannot_reactivate_tracking_after_an_explicit_pause() {
+        let backend = controlled_backend();
+        backend
+            .set_tracking(tracking_input(false))
+            .expect("explicit pause");
+        let before = backend
+            .snapshot(RuntimeProfile::Controlled)
+            .expect("paused state");
+        for location in [
+            serde_json::Value::Null,
+            serde_json::json!({
+                "latitude": 40.4, "longitude": -3.7, "accuracy": 10.0,
+                "timestampMs": 1_700_000_000_000_i64
+            }),
+        ] {
+            let tick: BackgroundTick = serde_json::from_value(serde_json::json!({
+                "role": "controlled", "timestampMs": 1_700_000_000_000_i64,
+                "dataDir": test_data_dir(), "batteryPercent": 80,
+                "preciseLocationGranted": true, "backgroundLocationGranted": true,
+                "batteryOptimizationDisabled": true, "location": location
+            }))
+            .expect("tick captured before pause");
+            assert_eq!(
+                process_controlled_tick(&backend, &tick)
+                    .expect_err("keep pause")
+                    .code,
+                "tracking_disabled"
+            );
+            assert_eq!(
+                backend
+                    .snapshot(RuntimeProfile::Controlled)
+                    .expect("unchanged paused state"),
+                before
+            );
+        }
+    }
+
+    #[test]
+    fn an_explicitly_enabled_device_still_delivers_current_background_locations() {
+        let backend = controlled_backend();
+        let tick: BackgroundTick = serde_json::from_value(serde_json::json!({
+            "role": "controlled", "timestampMs": 1_700_000_000_000_i64,
+            "dataDir": test_data_dir(), "batteryPercent": 74,
+            "location": { "latitude": 40.4, "longitude": -3.7, "accuracy": 10.0,
+                "timestampMs": 1_700_000_000_000_i64 }
+        }))
+        .expect("current tick");
+        let snapshot = process_controlled_tick(&backend, &tick).expect("location delivered");
+        assert!(snapshot.controlled.tracking_enabled);
+        let location = snapshot.controlled.last_location.expect("current location");
+        assert_eq!(location.latitude, 40.4);
+        assert_eq!(location.battery_percent, 74);
+    }
 
     fn test_data_dir() -> String {
         std::env::temp_dir()

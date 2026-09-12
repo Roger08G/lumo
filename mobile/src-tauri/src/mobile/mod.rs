@@ -7,7 +7,7 @@ use crate::{
     state::BackendState,
 };
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 mod background;
 
 pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
