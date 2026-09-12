@@ -13,8 +13,9 @@ Incluye una descripción breve, impacto, versión afectada y pasos mínimos para
 ## Secretos y compilaciones
 
 - No adjuntes `.env`, APK, AAB, certificados, claves privadas, keystores o bases de datos.
-- El cliente sólo necesita el modo de ejecución y el origen HTTPS público de la API.
-- `LUMO_SERVER_MASTER_KEY`, tokens de dispositivo y claves TLS pertenecen exclusivamente al servidor.
+- Para compilar el cliente sólo se necesita el modo de ejecución y el origen HTTPS público de la API.
+- `LUMO_SERVER_MASTER_KEY` y las claves privadas TLS pertenecen exclusivamente al servidor.
+- Las credenciales de dispositivo se emiten al vincularlo y se conservan en su almacén seguro; nunca se incorporan al código ni a la configuración de compilación.
 - Si una credencial aparece en un commit, log o artefacto, considérala expuesta: revócala o rótala antes de eliminar el contenido.
 
 Las pull requests y los pushes se analizan automáticamente para detectar secretos.
