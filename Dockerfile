@@ -2,6 +2,7 @@ FROM rust:1.98-bookworm AS builder
 
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+COPY vendor/glib ./vendor/glib
 COPY crates ./crates
 COPY mobile/src-tauri ./mobile/src-tauri
 COPY plugins ./plugins

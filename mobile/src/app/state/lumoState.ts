@@ -4,6 +4,7 @@ import type {
     GroupState,
     LumoAction,
     LumoState,
+    MobileRuntimeStatus,
     Place,
     PreferencesState,
     TimelineEvent,
@@ -449,6 +450,50 @@ function applyScenario(state: LumoState, scenario: DebugScenario): LumoState {
     }
 }
 
+function applyMobileStatus(state: LumoState, mobile: MobileRuntimeStatus): LumoState {
+    // The authenticated session owns the device role; the service role is null while paused.
+    const controlled = state.group.active && state.group.role === "member";
+    return {
+        ...state,
+        mobile,
+        demo: controlled
+            ? {
+                  ...state.demo,
+                  battery: mobile.batteryPercent,
+                  permission: mobile.preciseLocation === "granted" ? "granted" : "revoked",
+              }
+            : state.demo,
+        preferences: controlled
+            ? {
+                  ...state.preferences,
+                  // Remote tracking can belong to a replaced phone. Only local configuration
+                  // proves that setup was completed on this Android installation.
+                  trackerSetupComplete: mobile.controlledTrackingConfigured,
+                  trackerConsents: {
+                      preciseLocation: mobile.preciseLocation === "granted",
+                      backgroundLocation: mobile.backgroundLocation !== "denied",
+                      batteryProtection: mobile.batteryOptimizationDisabled,
+                  },
+              }
+            : state.group.active &&
+                state.group.role === "supervisor" &&
+                mobile.controllerNotificationsConfigured
+              ? {
+                    ...state.preferences,
+                    notifications: mobile.controllerNotificationsEnabled,
+                }
+              : state.preferences,
+    };
+}
+
+export function trackerSetupStatus(
+    state: LumoState,
+    mobileNative: boolean,
+): "pending" | "required" | "complete" {
+    if (mobileNative && !state.mobile) return "pending";
+    return state.preferences.trackerSetupComplete ? "complete" : "required";
+}
+
 export function reducer(state: LumoState, action: LumoAction): LumoState {
     switch (action.type) {
         case "ENTER_GROUP": {
@@ -487,8 +532,8 @@ export function reducer(state: LumoState, action: LumoAction): LumoState {
                 events: [],
                 demo: createDefaultDemo(),
             };
-        case "HYDRATE_BACKEND":
-            return {
+        case "HYDRATE_BACKEND": {
+            const next: LumoState = {
                 ...state,
                 group: action.payload.group,
                 mode: action.payload.mode,
@@ -507,15 +552,14 @@ export function reducer(state: LumoState, action: LumoAction): LumoState {
                     ...state.preferences,
                     trackerSetupComplete:
                         action.payload.trackerSetupComplete ||
-                        (action.payload.group.role === "member" &&
-                            state.mobile?.role === "controlled" &&
-                            state.mobile.controlledTrackingConfigured) ||
                         (state.group.active &&
                             action.payload.group.active &&
                             state.group.code === action.payload.group.code &&
                             state.preferences.trackerSetupComplete),
                 },
             };
+            return state.mobile ? applyMobileStatus(next, state.mobile) : next;
+        }
         case "SET_MODE":
             return { ...state, mode: action.payload };
         case "SET_TRACKER_CONSENT":
@@ -540,41 +584,7 @@ export function reducer(state: LumoState, action: LumoAction): LumoState {
                 preferences: { ...state.preferences, notifications: action.payload },
             };
         case "SYNC_MOBILE_STATUS": {
-            const isControlledDevice =
-                action.payload.role === "controlled" || state.mode === "tracker";
-            return {
-                ...state,
-                demo: isControlledDevice
-                    ? {
-                          ...state.demo,
-                          battery: action.payload.batteryPercent,
-                          permission:
-                              action.payload.preciseLocation === "granted" ? "granted" : "revoked",
-                      }
-                    : state.demo,
-                preferences: isControlledDevice
-                    ? {
-                          ...state.preferences,
-                          trackerSetupComplete:
-                              state.preferences.trackerSetupComplete ||
-                              action.payload.trackingEnabled ||
-                              action.payload.controlledTrackingConfigured,
-                          trackerConsents: {
-                              preciseLocation: action.payload.preciseLocation === "granted",
-                              backgroundLocation:
-                                  action.payload.backgroundLocation === "granted" ||
-                                  action.payload.backgroundLocation === "notRequired",
-                              batteryProtection: action.payload.batteryOptimizationDisabled,
-                          },
-                      }
-                    : action.payload.controllerNotificationsConfigured
-                      ? {
-                            ...state.preferences,
-                            notifications: action.payload.controllerNotificationsEnabled,
-                        }
-                      : state.preferences,
-                mobile: action.payload,
-            };
+            return applyMobileStatus(state, action.payload);
         }
         case "FINISH_LOCATE": {
             const demo = { ...state.demo, lastUpdatedAt: new Date().toISOString() };

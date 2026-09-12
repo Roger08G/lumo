@@ -4,6 +4,7 @@ import { Toaster } from "sonner";
 
 import { LumoProvider } from "@app/state/LumoProvider.tsx";
 import { useLumo } from "@app/state/lumoContext.ts";
+import { trackerSetupStatus } from "@app/state/lumoState.ts";
 import { BrandMark } from "@shared/components/BrandMark.tsx";
 import { Button, Modal } from "@shared/components/ui.tsx";
 
@@ -230,6 +231,14 @@ function AppContent() {
                             "La vinculación se está recuperando. Espera unos segundos antes de volver a intentarlo",
                         );
                     }
+                    if (snapshot?.group.role === "member" && backend.isMobileNative()) {
+                        const mobile = await backend.getMobileStatus();
+                        if (!mobile)
+                            throw new Error(
+                                "No se ha podido comprobar la configuración de Android. Vuelve a intentarlo",
+                            );
+                        dispatch({ type: "SYNC_MOBILE_STATUS", payload: mobile });
+                    }
                     dispatch(
                         snapshot
                             ? { type: "HYDRATE_BACKEND", payload: snapshot }
@@ -244,8 +253,10 @@ function AppContent() {
         return <ModeSelection onSelect={(mode) => dispatch({ type: "SET_MODE", payload: mode })} />;
     }
 
-    if (state.mode === "tracker" && !state.preferences.trackerSetupComplete) {
-        return <TrackerSetup />;
+    if (state.mode === "tracker") {
+        const setup = trackerSetupStatus(state, backend.isMobileNative());
+        if (setup === "pending") return <Splash />;
+        if (setup === "required") return <TrackerSetup />;
     }
 
     if (state.mode === "controller") return <Controller />;
