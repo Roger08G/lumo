@@ -118,13 +118,14 @@ demuestra que todas las posibles vulnerabilidades estén ausentes.
 
 ### Compatibilidad de PIN: Argon2 0.5 a 0.6
 
-Actualizar la biblioteca no debe invalidar los PIN ni los hashes existentes.
-La aceptación de esta transición requiere comprobar hashes producidos con 0.5
-desde 0.6, tanto en el dominio como en la API. Deben conservarse Argon2id,
-su versión y parámetros, el formato PHC, y la derivación que vincula el PIN
-del servidor al grupo y a la clave maestra.
+Se integra Argon2 0.6 conservando los PIN y hashes existentes. Las regresiones
+`argon2_05_credentials_remain_valid_after_the_upgrade` y
+`argon2_05_group_pin_remains_bound_to_its_original_pepper_and_group` verifican
+fixtures públicos generados con 0.5.3 desde 0.6, en el dominio y en la API.
+Se conservan Argon2id v19, los parámetros m=19456,t=2,p=1, el formato PHC y la
+derivación que vincula el PIN del servidor al grupo y a la clave maestra.
 
-El gate incluye verificar el PIN correcto, rechazar otro PIN y mantener el
+El gate verifica el PIN correcto, rechaza otro PIN y mantiene el
 rechazo cuando cambian el grupo o la clave maestra. No debe regenerarse la
 clave maestra ni solicitar al usuario que cambie su PIN para adaptar una
 dependencia. El manifiesto, el lock y las pruebas de compatibilidad son la
@@ -179,7 +180,7 @@ Los resultados locales no sustituyen la ejecución de Actions sobre el commit
 publicado. El cierre de CI y PR debe contrastarse con ese commit; este documento
 no asigna un estado final a ejecuciones que todavía estén pendientes.
 
-El release previsto contiene los archivos fuente generados por Git, sin adjuntar
+El release contiene los archivos fuente generados por Git, sin adjuntar
 APK. Las reglas de exportación excluyen los archivos `.env*`; las credenciales,
 certificados y datos operativos permanecen fuera del código publicado. Se
 conservan los recursos necesarios para compilar y las licencias de terceros.
