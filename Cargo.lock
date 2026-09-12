@@ -2296,7 +2296,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "lumo-api"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "argon2",
  "axum",
@@ -2322,7 +2322,7 @@ dependencies = [
 
 [[package]]
 name = "lumo-core"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "argon2",
  "base64 0.23.1",
@@ -2338,7 +2338,7 @@ dependencies = [
 
 [[package]]
 name = "lumo-mobile"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "dotenvy",
  "jni 0.22.4",
@@ -2358,7 +2358,7 @@ dependencies = [
 
 [[package]]
 name = "lumo-protocol"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "base64 0.23.1",
  "hkdf",
@@ -2375,7 +2375,7 @@ dependencies = [
 
 [[package]]
 name = "lumo-runtime"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -4180,7 +4180,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-lumo-mobile"
-version = "0.1.0"
+version = "2.0.0"
 dependencies = [
  "serde",
  "serde_json",

@@ -7,7 +7,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.Location
-import android.location.LocationListener
 import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.Network
@@ -18,6 +17,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import androidx.core.location.LocationListenerCompat
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -204,7 +204,9 @@ internal abstract class LumoForegroundService : Service() {
     }
 }
 
-internal class LumoLocationService : LumoForegroundService(), LocationListener {
+// The platform listener only supplies default provider callbacks from API 30 onward.
+// Compat keeps provider changes safe on our supported Android 7-10 devices as well.
+internal class LumoLocationService : LumoForegroundService(), LocationListenerCompat {
     override val role = LumoServiceController.ROLE_CONTROLLED
     override val notificationId = LumoNotifications.LOCATION_FOREGROUND_ID
     override val lumoForegroundServiceType: Int

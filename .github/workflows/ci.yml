@@ -87,6 +87,10 @@ jobs:
           grep --fixed-strings 'check_public_v2_contract' <<<"$rollback_body" >/dev/null
           grep --fixed-strings 'without rewinding live data' <<<"$rollback_body" >/dev/null
       - name: Verify Rust workspace
+        env:
+          # Keep upstream path-dependency warnings visible. The script applies
+          # -D warnings to every workspace crate through strict Clippy.
+          RUSTFLAGS: ""
         run: ./scripts/verify-local-backend.sh
       - name: Verify GLib upstream backport and optimized regressions
         env:

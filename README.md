@@ -13,7 +13,7 @@
   <a href="https://github.com/Roger08G/lumo/releases"><img src="https://img.shields.io/github/v/release/Roger08G/lumo?display_name=tag&sort=semver" alt="Versión"></a>
   <a href="https://github.com/Roger08G/lumo/stargazers"><img src="https://img.shields.io/github/stars/Roger08G/lumo?style=flat" alt="Estrellas"></a>
   <a href="https://github.com/Roger08G/lumo/network/members"><img src="https://img.shields.io/github/forks/Roger08G/lumo?style=flat" alt="Forks"></a>
-  <img src="https://img.shields.io/badge/Rust-1.97%2B-orange?logo=rust" alt="Rust">
+  <img src="https://img.shields.io/badge/Rust-1.98%2B-orange?logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=20232A" alt="React">
   <img src="https://img.shields.io/badge/Android-API%2024%2B-3DDC84?logo=android&logoColor=white" alt="Android">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/Roger08G/lumo" alt="Licencia"></a>
@@ -28,6 +28,7 @@ Lumo es una aplicación de seguimiento familiar con tres experiencias: **control
 ## Funciones
 
 - Emparejamiento mediante QR de un solo uso y PIN de seis cifras.
+- Reemplazo autorizado del teléfono controlado mediante QR, conservando su organización.
 - Varios controladores para un controlado; los permisos se validan en el servidor.
 - Ubicación en segundo plano, cola cifrada offline y reintentos acotados.
 - Lugares habituales con geocercas, dirección, colores e iconos configurables.
@@ -82,6 +83,8 @@ flowchart LR
 ```
 
 El frontend sólo presenta snapshots. La autoridad para grupos, roles, PIN, invitaciones y estado remoto está en Rust y en la API. Un dispositivo controlado nunca recibe la clave del estado canónico del controlador: envía operaciones tipadas y cifradas.
+
+Consulta las [decisiones de arquitectura y recuperación](docs/architecture.md) y la [auditoría de v2.0.0](docs/audit-v2.md) para conocer las garantías, pruebas y límites de esta versión.
 
 ## Seguridad y privacidad
 
@@ -152,7 +155,9 @@ Si generas tu propio APK, declara sólo `LUMO_RUNTIME_MODE=remote` y el origen H
 
 ## CI y dependencias
 
-GitHub Actions ejecuta Frontend, Rust, Container y detección de secretos en cada push y pull request. Dependabot propone actualizaciones semanalmente; los saltos mayores se aceptan sólo cuando pasan todos los jobs y se revisan sus cambios de API.
+GitHub Actions ejecuta formato, ESLint, tipos, pruebas y build del frontend; el gate completo de Rust; compilación, pruebas y lint Android; pruebas del contenedor con TLS; auditoría de dependencias y detección de secretos. Los APK temporales de CI no se publican como artefactos. Dependabot propone actualizaciones semanalmente; los saltos mayores requieren revisar sus cambios de API y validar los jobs.
+
+La [corrección local de GLib](docs/dependency-backports.md) conserva la API que necesita GTK3 y verifica su procedencia y regresiones en modo optimizado. Los avisos de mantenimiento de dependencias transitivas se detallan en la auditoría; no se silencian con una lista de excepciones.
 
 ## Licencia
 
