@@ -1,5 +1,5 @@
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Algorithm, Argon2, Params, Version,
 };
 
@@ -23,9 +23,8 @@ pub fn validate_pin(pin: &str) -> LumoResult<()> {
 
 pub fn hash_pin(pin: &str) -> LumoResult<String> {
     validate_pin(pin)?;
-    let salt = SaltString::generate(&mut OsRng);
     algorithm()?
-        .hash_password(pin.as_bytes(), &salt)
+        .hash_password(pin.as_bytes())
         .map(|hash| hash.to_string())
         .map_err(|error| LumoError::Configuration(error.to_string()))
 }
@@ -58,5 +57,38 @@ mod tests {
         for invalid in ["12345", "1234567", "abcdef", "12 456"] {
             assert!(validate_pin(invalid).is_err());
         }
+    }
+
+    #[test]
+    fn argon2_05_credentials_remain_valid_after_the_upgrade() {
+        // Public test fixture generated with argon2 0.5.3, PIN 123456, salt
+        // b"lumo-test-salt-05", Argon2id v19 and the application's m=19456,t=2,p=1.
+        const LEGACY_PHC: &str = concat!(
+            "$argon2id$v=19$m=19456,t=2,p=1$bHVtby10ZXN0LXNhbHQtMDU$",
+            "PBmlEA5DaZUWHFMxlPrMbMJnC0UHolzPGS/jr7DDn34"
+        );
+        assert!(verify_pin("123456", LEGACY_PHC));
+        assert!(!verify_pin("654321", LEGACY_PHC));
+    }
+
+    #[test]
+    fn each_hash_gets_a_fresh_salt_without_changing_security_parameters() {
+        let first = hash_pin("123456").expect("first hash");
+        let second = hash_pin("123456").expect("second hash");
+        for encoded in [&first, &second] {
+            assert!(encoded.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
+            assert!(verify_pin("123456", encoded));
+        }
+        let first_salt = PasswordHash::new(&first)
+            .expect("first PHC")
+            .salt
+            .expect("first salt");
+        let second_salt = PasswordHash::new(&second)
+            .expect("second PHC")
+            .salt
+            .expect("second salt");
+        assert_eq!(first_salt.len(), 16);
+        assert_eq!(second_salt.len(), 16);
+        assert_ne!(first_salt, second_salt);
     }
 }
