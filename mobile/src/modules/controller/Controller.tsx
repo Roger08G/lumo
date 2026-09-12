@@ -500,7 +500,7 @@ function EmergencyAlarmOverlay({
     alarm: ActiveAlarm;
     address: string;
     locating: boolean;
-    onStop: () => Promise<void>;
+    onStop: () => Promise<boolean>;
     onCall: () => void;
     onLocate: () => void;
     onClose: () => void;
@@ -520,8 +520,7 @@ function EmergencyAlarmOverlay({
         if (stopping || acknowledged) return;
         setStopping(true);
         try {
-            await onStop();
-            setAcknowledged(true);
+            if (await onStop()) setAcknowledged(true);
         } finally {
             setStopping(false);
         }
@@ -1298,6 +1297,8 @@ function PlaceModal({
     const [error, setError] = useState("");
     const [saving, setSaving] = useState(false);
     const editing = Boolean(place);
+    const placesRef = useRef(state.places);
+    placesRef.current = state.places;
 
     useEffect(() => {
         if (!open) return;
@@ -1306,7 +1307,9 @@ function PlaceModal({
         setAddress(place?.address ?? "");
         setCoordinates(place?.coordinates ?? "");
         setIcon(place?.icon ?? "pin");
-        setColor(place?.color ?? randomPlaceTone(state.places[state.places.length - 1]?.color));
+        // Only choose a default when opening the form; polling must not erase edits.
+        const places = placesRef.current;
+        setColor(place?.color ?? randomPlaceTone(places[places.length - 1]?.color));
         setError("");
         setSaving(false);
     }, [open, place]);
@@ -1320,6 +1323,7 @@ function PlaceModal({
 
     const save = async (event: FormEvent) => {
         event.preventDefault();
+        if (saving) return;
         if (step === 0) {
             if (name.trim().length < 2 || address.trim().length < 4) {
                 setError("Completa el nombre y la dirección exacta");
@@ -1372,7 +1376,9 @@ function PlaceModal({
     return (
         <Modal
             open={open}
-            onClose={onClose}
+            onClose={() => {
+                if (!saving) onClose();
+            }}
             eyebrow={`Paso ${step + 1} de 2`}
             title={step === 0 ? (editing ? "Editar los datos" : "Nuevo lugar") : "Elige su estilo"}
         >
@@ -1671,6 +1677,7 @@ export function Controller() {
         state.demo.address,
         state.demo.coordinates,
         state.demo.location,
+        state.demo.placeName,
         state.places,
     ]);
 
@@ -1794,13 +1801,22 @@ export function Controller() {
     };
 
     const stopAlarm = async () => {
-        await backend.stopEmergencyAlarm().catch(() => false);
-        const snapshot = await backend.markEventsRead().catch(() => null);
-        dispatch(
-            snapshot
-                ? { type: "HYDRATE_BACKEND", payload: snapshot }
-                : { type: "MARK_EVENTS_READ" },
-        );
+        try {
+            await backend.stopEmergencyAlarm();
+            const snapshot = await backend.markEventsRead();
+            dispatch(
+                snapshot
+                    ? { type: "HYDRATE_BACKEND", payload: snapshot }
+                    : { type: "MARK_EVENTS_READ" },
+            );
+            return true;
+        } catch (error) {
+            setToast({
+                title: "No se ha podido confirmar el aviso",
+                detail: error instanceof Error ? error.message : "Inténtalo de nuevo",
+            });
+            return false;
+        }
     };
 
     const openNotifications = async () => {

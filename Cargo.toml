@@ -8,6 +8,7 @@ members = [
     "plugins/tauri-plugin-lumo-mobile",
 ]
 resolver = "2"
+exclude = ["vendor/glib"]
 
 [workspace.package]
 version = "0.1.0"
@@ -37,3 +38,7 @@ tokio = { version = "1.48.0", features = ["macros", "net", "rt-multi-thread", "s
 tower = "0.5.2"
 uuid = { version = "1.18.1", features = ["v4", "serde"] }
 zeroize = "1.8.1"
+
+[patch.crates-io]
+# GTK3 still requires glib 0.18. Preserve its API with the verified upstream fix.
+glib = { path = "vendor/glib" }

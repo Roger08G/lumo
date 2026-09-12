@@ -91,6 +91,7 @@ export interface MobileRuntimeStatus {
     platform: "android";
     trackingEnabled: boolean;
     controlledTrackingMayAutoRecover: boolean;
+    controlledTrackingConfigured: boolean;
     role: MobileRole | null;
     preciseLocation: "granted" | "denied";
     backgroundLocation: "granted" | "denied" | "notRequired";

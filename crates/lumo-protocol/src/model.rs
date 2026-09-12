@@ -323,6 +323,9 @@ pub struct CreateInvitationRequest {
     pub pin: String,
     #[serde(default)]
     pub role: DeviceRole,
+    /// Explicitly replace this controlled device when the invitation is consumed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replace_device_id: Option<String>,
 }
 
 impl std::fmt::Debug for CreateInvitationRequest {
@@ -331,6 +334,7 @@ impl std::fmt::Debug for CreateInvitationRequest {
             .debug_struct("CreateInvitationRequest")
             .field("pin", &"[REDACTED]")
             .field("role", &self.role)
+            .field("replace_device_id", &self.replace_device_id)
             .finish()
     }
 }
@@ -464,6 +468,7 @@ mod v2_tests {
         let invite = CreateInvitationRequest {
             pin: "second-pin-that-must-not-leak".to_owned(),
             role: DeviceRole::Controlled,
+            replace_device_id: None,
         };
         assert!(!format!("{create:?}").contains("pin-that-must-not-leak"));
         assert!(!format!("{invite:?}").contains("second-pin-that-must-not-leak"));
@@ -475,6 +480,7 @@ mod v2_tests {
             serde_json::from_str(r#"{"pin":"123456"}"#).expect("deserialize legacy request");
 
         assert_eq!(request.role, DeviceRole::Controlled);
+        assert_eq!(request.replace_device_id, None);
     }
 
     #[test]

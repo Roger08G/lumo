@@ -1,0 +1,29 @@
+{
+  "crate": "glib",
+  "version": "0.18.5",
+  "license": "MIT",
+  "archive_url": "https://static.crates.io/crates/glib/glib-0.18.5.crate",
+  "archive_sha256": "233daaf6e83ae6a12a52055f568f9d7cf4671dabb78ff9560ab6da230ce00ee5",
+  "upstream_source_commit": "42b9caf98e03ded086362d9653ca58fe94dc8658",
+  "advisory": "RUSTSEC-2024-0429",
+  "upstream_fix_commit": "05dff0ee696f9bcd8617cd48c4b812d046d440cb",
+  "original_file_count": 121,
+  "modified_upstream_files": {
+    "src/collections/strv.rs": {
+      "original_sha256": "e519528d5006592cf682be0ddca09a7eb2b5997115df28184b19e81881c03f03",
+      "patched_sha256": "40a82efa90b733dbdd414c8322ab87f62ed6e73fc11c148e02dce22afb22533a"
+    },
+    "src/variant_iter.rs": {
+      "original_sha256": "1fd02859333761c45321b32f28b24233446b97d0022a90d3a937ed162585b90e",
+      "patched_sha256": "a0f5ee8acb8faa089bcdfbc9a57372609fce7654026ccef7d9a224d05a654ccc"
+    }
+  },
+  "added_files": [
+    ".gitattributes",
+    "Cargo.lock",
+    "BACKPORT.json",
+    "verify_backport.py",
+    "test_verify_backport.py",
+    "tests/variant_str_iter_backport.rs"
+  ]
+}

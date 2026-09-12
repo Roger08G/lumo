@@ -11,7 +11,8 @@ pub fn distance_m(first_lat: f64, first_lon: f64, second_lat: f64, second_lon: f
     let delta_lon = second_lon - first_lon;
     let haversine = (delta_lat / 2.0).sin().powi(2)
         + first_lat.cos() * second_lat.cos() * (delta_lon / 2.0).sin().powi(2);
-    2.0 * EARTH_RADIUS_M * haversine.sqrt().asin()
+    // Rounding near antipodal points can put the haversine just above one.
+    2.0 * EARTH_RADIUS_M * haversine.clamp(0.0, 1.0).sqrt().asin()
 }
 
 pub fn containing_place(places: &[Place], latitude: f64, longitude: f64) -> Option<&Place> {
@@ -30,6 +31,15 @@ mod tests {
     use crate::domain::{PlaceIcon, PlaceKind, PlaceTone};
 
     use super::*;
+
+    #[test]
+    fn antipodal_distance_is_finite() {
+        for latitude in -90..=90 {
+            let distance = distance_m(f64::from(latitude), 0.0, -f64::from(latitude), 180.0);
+            assert!(distance.is_finite());
+            assert!((distance - std::f64::consts::PI * EARTH_RADIUS_M).abs() < 1.0);
+        }
+    }
 
     #[test]
     fn finds_a_point_inside_a_geofence() {

@@ -15,8 +15,7 @@ internal enum class LumoBackgroundResultKind {
 internal object LumoBackgroundErrorPolicy {
     private val credentialErrors =
         setOf(
-            "authentication_failed",
-            "credential_invalid",
+            "credential_rejected",
             "credential_revoked",
         )
 
@@ -34,17 +33,54 @@ private data class LumoBackgroundInvocation(
     val response: JSONObject? = null,
 )
 
-internal object LumoTickProcessor {
+/** An inaccessible backlog must not prevent this tick from delivering its current location. */
+internal object LumoBacklogFlusher {
     private const val MAX_FLUSH_PER_TICK = 8
+
+    fun flush(
+        read: () -> List<String>,
+        send: (String) -> LumoBackgroundResultKind,
+        replace: (List<String>) -> Unit,
+    ): LumoBackgroundResultKind? {
+        // Keep ciphertext intact on provider/key failures; retry it on the next tick.
+        val pending = runCatching(read).getOrElse { return null }
+        if (pending.isEmpty()) return null
+        var processed = 0
+        var failure: LumoBackgroundResultKind? = null
+        for (payload in pending.take(MAX_FLUSH_PER_TICK)) {
+            when (val kind = send(payload)) {
+                LumoBackgroundResultKind.SUCCESS -> processed += 1
+                LumoBackgroundResultKind.TRANSIENT_FAILURE -> {
+                    failure = kind
+                    break
+                }
+                LumoBackgroundResultKind.TRACKING_DISABLED,
+                LumoBackgroundResultKind.CREDENTIAL_REJECTED,
+                -> return kind
+            }
+        }
+        if (processed > 0) {
+            // A failed local write may replay old entries later, but must not stop live delivery.
+            runCatching { replace(pending.drop(processed)) }
+        }
+        return failure
+    }
+}
+
+internal object LumoTickProcessor {
 
     @Synchronized
     fun process(context: Context, role: String, location: Location?) {
         val queue = LumoSecureQueue(context)
-        val credential = LumoCredentialVault.load(context)
-        if (credential == null) {
-            disableForCredentialRepair(context, queue)
+        val credential = runCatching { LumoCredentialVault.load(context) }.getOrElse {
+            // Preserve the user's configuration and retry on the next scheduled tick.
             return
         }
+        if (credential == null) {
+            disableForCredentialRepair(context, queue, null)
+            return
+        }
+        if (credential.role != role) return
         val pendingAcknowledgement =
             if (role == LumoServiceController.ROLE_CONTROLLER) {
                 LumoEmergencyAlarm.pendingAcknowledgement(context)
@@ -56,31 +92,41 @@ internal object LumoTickProcessor {
 
         when (flushPending(context, queue, credential)) {
             LumoBackgroundResultKind.TRACKING_DISABLED -> {
-                disableTracking(context, queue)
+                withCurrentCredential(context, credential) { disableTracking(context, queue, recordPause = true) }
                 return
             }
             LumoBackgroundResultKind.CREDENTIAL_REJECTED -> {
-                disableForCredentialRepair(context, queue)
+                disableForCredentialRepair(context, queue, credential)
+                return
+            }
+            LumoBackgroundResultKind.TRANSIENT_FAILURE -> {
+                withCurrentCredential(context, credential) {
+                    if (role == LumoServiceController.ROLE_CONTROLLED && location != null) {
+                        queue.enqueue(payload)
+                    }
+                }
                 return
             }
             else -> Unit
         }
         val invocation = invoke(payload, credential)
-        when (invocation.kind) {
-            LumoBackgroundResultKind.SUCCESS -> {
-                pendingAcknowledgement?.let {
-                    LumoEmergencyAlarm.completeAcknowledgement(context, it)
+        withCurrentCredential(context, credential) {
+            when (invocation.kind) {
+                LumoBackgroundResultKind.SUCCESS -> {
+                    pendingAcknowledgement?.let {
+                        LumoEmergencyAlarm.completeAcknowledgement(context, it)
+                    }
+                    invocation.response?.let { publishNotifications(context, it) }
                 }
-                invocation.response?.let { publishNotifications(context, it) }
-            }
-            LumoBackgroundResultKind.TRANSIENT_FAILURE -> {
-                if (role == LumoServiceController.ROLE_CONTROLLED && location != null) {
-                    queue.enqueue(payload)
+                LumoBackgroundResultKind.TRANSIENT_FAILURE -> {
+                    if (role == LumoServiceController.ROLE_CONTROLLED && location != null) {
+                        queue.enqueue(payload)
+                    }
                 }
+                LumoBackgroundResultKind.TRACKING_DISABLED -> disableTracking(context, queue, recordPause = true)
+                LumoBackgroundResultKind.CREDENTIAL_REJECTED ->
+                    disableForCredentialRepair(context, queue, credential)
             }
-            LumoBackgroundResultKind.TRACKING_DISABLED -> disableTracking(context, queue)
-            LumoBackgroundResultKind.CREDENTIAL_REJECTED ->
-                disableForCredentialRepair(context, queue)
         }
     }
 
@@ -102,29 +148,48 @@ internal object LumoTickProcessor {
         context: Context,
         queue: LumoSecureQueue,
         credential: LumoDeviceCredential,
-    ): LumoBackgroundResultKind? {
-        val pending = queue.read()
-        if (pending.isEmpty()) return null
-        var processed = 0
-        for (payload in pending.take(MAX_FLUSH_PER_TICK)) {
-            if (!queuedPayloadBelongsTo(payload, credential)) {
-                processed += 1
-                continue
-            }
-            val invocation = invoke(payload, credential)
-            when (invocation.kind) {
-                LumoBackgroundResultKind.SUCCESS -> {
-                    invocation.response?.let { publishNotifications(context, it) }
-                    processed += 1
+    ): LumoBackgroundResultKind? =
+        LumoBacklogFlusher.flush(
+            read = queue::read,
+            send = { payload ->
+                if (!queuedPayloadBelongsTo(payload, credential)) {
+                    LumoBackgroundResultKind.SUCCESS
+                } else {
+                    val invocation = invoke(payload, credential)
+                    if (invocation.kind == LumoBackgroundResultKind.SUCCESS) {
+                        val published = withCurrentCredential(context, credential) {
+                            invocation.response?.let { publishNotifications(context, it) }
+                        }
+                        if (published) {
+                            LumoBackgroundResultKind.SUCCESS
+                        } else {
+                            LumoBackgroundResultKind.CREDENTIAL_REJECTED
+                        }
+                    } else {
+                        invocation.kind
+                    }
                 }
-                LumoBackgroundResultKind.TRANSIENT_FAILURE -> break
-                LumoBackgroundResultKind.TRACKING_DISABLED,
-                LumoBackgroundResultKind.CREDENTIAL_REJECTED,
-                -> return invocation.kind
-            }
+            },
+            replace = { remaining ->
+                withCurrentCredential(context, credential) { queue.replace(remaining) }
+            },
+        )
+
+    private fun withCurrentCredential(
+        context: Context,
+        expected: LumoDeviceCredential,
+        operation: () -> Unit,
+    ): Boolean = LumoCredentialVault.withLock {
+        val current = runCatching { LumoCredentialVault.load(context) }.getOrNull()
+        if (
+            current == null || !current.samePrincipal(expected) ||
+                current.deviceToken != expected.deviceToken
+        ) {
+            false
+        } else {
+            operation()
+            true
         }
-        if (processed > 0) queue.replace(pending.drop(processed))
-        return null
     }
 
     private fun queuedPayloadBelongsTo(
@@ -207,8 +272,12 @@ internal object LumoTickProcessor {
             LumoBackgroundInvocation(LumoBackgroundResultKind.TRANSIENT_FAILURE)
         }
 
-    private fun disableTracking(context: Context, queue: LumoSecureQueue) {
+    private fun disableTracking(context: Context, queue: LumoSecureQueue, recordPause: Boolean = false) {
         queue.replace(emptyList())
+        if (recordPause) {
+            // A server-confirmed pause must not be treated as an OEM interruption by the UI.
+            LumoPreferences.recordControlledTrackingChoice(context, false)
+        }
         LumoPreferences.setTracking(
             context,
             enabled = false,
@@ -218,7 +287,21 @@ internal object LumoTickProcessor {
         LumoServiceController.stop(context)
     }
 
-    private fun disableForCredentialRepair(context: Context, queue: LumoSecureQueue) {
+    private fun disableForCredentialRepair(
+        context: Context,
+        queue: LumoSecureQueue,
+        rejected: LumoDeviceCredential?,
+    ) = LumoCredentialVault.withLock {
+        val current = runCatching { LumoCredentialVault.load(context) }.getOrElse {
+            return@withLock
+        }
+        // An old HTTP response must not erase a replacement credential installed by the UI.
+        if (
+            current?.deviceToken != rejected?.deviceToken ||
+                (current != null && rejected != null && !current.samePrincipal(rejected))
+        ) {
+            return@withLock
+        }
         LumoCredentialVault.clear(context)
         LumoPreferences.clearControllerNotifications(context)
         LumoPreferences.clearControlledTrackingChoice(context)

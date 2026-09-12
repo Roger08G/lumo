@@ -3,14 +3,16 @@ export interface Coordinates {
     longitude: number;
 }
 
-const COORDINATE_NUMBER = /[+-]?\d+(?:[.,]\d+)?/g;
+const COORDINATE_PAIR = /^([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)$/;
+const LOCALIZED_COORDINATE_PAIR = /^([+-]?\d+(?:[.,]\d+)?)(?:\s*;\s*|\s+)([+-]?\d+(?:[.,]\d+)?)$/;
 
 export function parseCoordinates(value: string): Coordinates | null {
-    const matches = value.trim().match(COORDINATE_NUMBER);
-    if (!matches || matches.length !== 2) return null;
+    const text = value.trim();
+    const matches = text.match(COORDINATE_PAIR) ?? text.match(LOCALIZED_COORDINATE_PAIR);
+    if (!matches) return null;
 
-    const latitude = Number(matches[0].replace(",", "."));
-    const longitude = Number(matches[1].replace(",", "."));
+    const latitude = Number(matches[1].replace(",", "."));
+    const longitude = Number(matches[2].replace(",", "."));
     if (
         !Number.isFinite(latitude) ||
         !Number.isFinite(longitude) ||

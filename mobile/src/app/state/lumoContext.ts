@@ -7,6 +7,10 @@ export interface LumoContextValue {
     state: LumoState;
     dispatch: Dispatch<LumoAction>;
     backend: LumoBackend;
+    bootstrapStatus: "loading" | "ready" | "error";
+    bootstrapError: string;
+    bootstrapCanReset: boolean;
+    retryBootstrap: () => void;
 }
 
 export const LumoContext = createContext<LumoContextValue | null>(null);

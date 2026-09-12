@@ -9,6 +9,8 @@ pub struct MobileStatus {
     pub platform: String,
     pub tracking_enabled: bool,
     pub controlled_tracking_may_auto_recover: bool,
+    #[serde(default)]
+    pub controlled_tracking_configured: bool,
     pub role: Option<String>,
     pub precise_location: String,
     pub background_location: String,
@@ -158,6 +160,7 @@ mod tests {
             platform: "android".to_owned(),
             tracking_enabled: false,
             controlled_tracking_may_auto_recover: false,
+            controlled_tracking_configured: false,
             role: None,
             precise_location: "denied".to_owned(),
             background_location: "denied".to_owned(),

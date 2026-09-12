@@ -101,6 +101,7 @@ export function Tracker() {
     const [pinError, setPinError] = useState("");
     const [unlocking, setUnlocking] = useState(false);
     const [reactivating, setReactivating] = useState(false);
+    const [changingTracking, setChangingTracking] = useState(false);
     const [toast, setToast] = useState<{ title: string; detail?: string } | null>(null);
     const permissionOk = state.mobile
         ? state.mobile.preciseLocation === "granted" &&
@@ -162,6 +163,7 @@ export function Tracker() {
     };
 
     const reactivateTracking = async () => {
+        if (reactivating || changingTracking) return;
         setReactivating(true);
         try {
             const result = await backend.setControlledTracking(true);
@@ -488,7 +490,10 @@ export function Tracker() {
                                     : "El servicio de ubicación está detenido"
                             }
                             checked={trackingOk}
+                            disabled={changingTracking || reactivating}
                             onChange={async (checked) => {
+                                if (changingTracking || reactivating) return;
+                                setChangingTracking(true);
                                 try {
                                     const result = await backend.setControlledTracking(checked);
                                     if (result.status) {
@@ -511,6 +516,8 @@ export function Tracker() {
                                                 ? requestError.message
                                                 : "Revisa los permisos de Android",
                                     });
+                                } finally {
+                                    setChangingTracking(false);
                                 }
                             }}
                         />

@@ -7,7 +7,7 @@ use crate::{
     state::BackendState,
 };
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 mod background;
 
 pub fn init<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
@@ -43,7 +43,7 @@ pub fn mobile_request_permissions(
     state: State<'_, BackendState>,
     role: String,
 ) -> CommandResult<MobileStatus> {
-    authorize_role(&state.1, &role)?;
+    authorize_role(&state.binding, &role)?;
     app.lumo_mobile()
         .request_permissions(&role)
         .map_err(bridge_error)
@@ -57,7 +57,7 @@ pub fn mobile_configure_tracking(
     enabled: bool,
     interval_seconds: Option<u64>,
 ) -> CommandResult<MobileStatus> {
-    authorize_role(&state.1, &role)?;
+    authorize_role(&state.binding, &role)?;
     app.lumo_mobile()
         .configure_tracking(&role, enabled, interval_seconds.unwrap_or(30))
         .map_err(bridge_error)
@@ -123,7 +123,7 @@ pub fn mobile_start_emergency_alarm(
     state: State<'_, BackendState>,
     alarm: PendingAlarm,
 ) -> CommandResult<()> {
-    state.1.require_controller()?;
+    state.binding.require_controller()?;
     if alarm.id.trim().is_empty() || alarm.title.trim().is_empty() || alarm.body.trim().is_empty() {
         return Err(CommandError {
             code: "invalid_input",
@@ -161,7 +161,7 @@ pub fn mobile_get_pending_alarm(
     app: AppHandle,
     state: State<'_, BackendState>,
 ) -> CommandResult<Option<PendingAlarm>> {
-    state.1.require_controller()?;
+    state.binding.require_controller()?;
     app.lumo_mobile().pending_alarm().map_err(bridge_error)
 }
 
@@ -170,7 +170,7 @@ pub fn mobile_stop_emergency_alarm(
     app: AppHandle,
     state: State<'_, BackendState>,
 ) -> CommandResult<()> {
-    state.1.require_controller()?;
+    state.binding.require_controller()?;
     app.lumo_mobile()
         .stop_emergency_alarm()
         .map_err(bridge_error)

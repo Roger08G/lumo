@@ -2,6 +2,7 @@
 .github
 .lumo-data
 .env
+.env.*
 certs/
 .ci-certs/
 backups/

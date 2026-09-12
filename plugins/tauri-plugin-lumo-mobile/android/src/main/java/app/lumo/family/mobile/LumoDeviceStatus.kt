@@ -72,6 +72,7 @@ internal object LumoDeviceStatus {
         JSObject()
             .put("platform", "android")
             .put("trackingEnabled", LumoPreferences.isEnabled(context))
+            .put("controlledTrackingConfigured", LumoPreferences.controlledTrackingConfigured(context))
             .put(
                 "controlledTrackingMayAutoRecover",
                 LumoPreferences.controlledTrackingMayAutoRecover(context),

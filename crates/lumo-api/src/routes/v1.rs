@@ -202,6 +202,7 @@ fn with_etag(mut response: Response, etag: &str) -> Response {
 
 pub(crate) fn api_error(error: LumoError) -> Response {
     let (status, code) = match &error {
+        LumoError::CredentialRejected => (StatusCode::UNAUTHORIZED, "credential_rejected"),
         LumoError::AuthenticationFailed => (StatusCode::UNAUTHORIZED, "authentication_failed"),
         LumoError::ExpiredMessage => (StatusCode::UNAUTHORIZED, "clock_skew"),
         LumoError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),

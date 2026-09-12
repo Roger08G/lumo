@@ -182,8 +182,9 @@ internal object LumoCredentialVault {
     private const val KEY_CREDENTIAL = "credential_v1"
     private const val KEY_ALIAS = "lumo.device.credential.v1"
     private const val ANDROID_KEY_STORE = "AndroidKeyStore"
-    private const val MAX_ENVELOPE_CHARS = LumoCredentialPolicy.MAX_PLAINTEXT_BYTES * 2 + 128
     private val lock = Any()
+
+    fun <T> withLock(operation: () -> T): T = synchronized(lock, operation)
 
     @SuppressLint("ApplySharedPref", "UseKtx")
     fun store(context: Context, credential: LumoDeviceCredential): Boolean =
@@ -195,7 +196,7 @@ internal object LumoCredentialVault {
                     return@synchronized false
                 }
                 val envelope =
-                    runCatching { LumoCredentialCipher.encrypt(plaintext, key()) }.getOrNull()
+                    runCatching { LumoCredentialCipher.encrypt(plaintext, key(create = true)) }.getOrNull()
                         ?: return@synchronized false
                 context.getSharedPreferences(PREFERENCES_FILE, Context.MODE_PRIVATE)
                     .edit()
@@ -210,32 +211,13 @@ internal object LumoCredentialVault {
         synchronized(lock) {
             val preferences =
                 context.getSharedPreferences(PREFERENCES_FILE, Context.MODE_PRIVATE)
-            val envelope = preferences.getString(KEY_CREDENTIAL, null) ?: return@synchronized null
-            if (envelope.length > MAX_ENVELOPE_CHARS) {
-                clearLocked(context)
-                return@synchronized null
-            }
-            val plaintext =
-                runCatching { LumoCredentialCipher.decrypt(envelope, key()) }.getOrElse {
-                    clearLocked(context)
-                    return@synchronized null
-                }
-            try {
-                if (plaintext.size > LumoCredentialPolicy.MAX_PLAINTEXT_BYTES) {
-                    clearLocked(context)
-                    return@synchronized null
-                }
-                val credential =
-                    runCatching {
-                        LumoDeviceCredential.fromJson(
-                            JSONObject(plaintext.toString(Charsets.UTF_8)),
-                        )
-                    }.getOrNull()
-                if (credential == null) clearLocked(context)
-                credential
-            } finally {
-                plaintext.fill(0)
-            }
+            LumoCredentialReader.read(
+                preferences.getString(KEY_CREDENTIAL, null),
+                decrypt = { LumoCredentialCipher.decrypt(it, key(create = false)) },
+                decode = {
+                    LumoDeviceCredential.fromJson(JSONObject(it.toString(Charsets.UTF_8)))
+                },
+            )
         }
 
     fun clear(context: Context): Boolean = synchronized(lock) { clearLocked(context) }
@@ -247,16 +229,19 @@ internal object LumoCredentialVault {
                 .edit()
                 .remove(KEY_CREDENTIAL)
                 .commit()
-        runCatching {
-            val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
-            if (keyStore.containsAlias(KEY_ALIAS)) keyStore.deleteEntry(KEY_ALIAS)
+        if (removed) {
+            runCatching {
+                val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
+                if (keyStore.containsAlias(KEY_ALIAS)) keyStore.deleteEntry(KEY_ALIAS)
+            }
         }
         return removed
     }
 
-    private fun key(): SecretKey {
+    private fun key(create: Boolean): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
         (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        check(create) { "device credential key is temporarily unavailable" }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEY_STORE)
         generator.init(
             KeyGenParameterSpec.Builder(
@@ -271,5 +256,30 @@ internal object LumoCredentialVault {
                 .build(),
         )
         return generator.generateKey()
+    }
+}
+
+/** A failed read is never evidence that the user has unpaired this device. */
+internal object LumoCredentialReader {
+    private const val MAX_ENVELOPE_CHARS = LumoCredentialPolicy.MAX_PLAINTEXT_BYTES * 2 + 128
+
+    fun read(
+        envelope: String?,
+        decrypt: (String) -> ByteArray,
+        decode: (ByteArray) -> LumoDeviceCredential?,
+    ): LumoDeviceCredential? {
+        if (envelope == null) return null
+        check(envelope.length <= MAX_ENVELOPE_CHARS) { "invalid credential envelope" }
+        // AndroidKeyStore can temporarily fail during boot, updates or provider restarts.
+        // Propagate the failure so the caller retries without deleting the ciphertext or key.
+        val plaintext = decrypt(envelope)
+        try {
+            check(plaintext.size <= LumoCredentialPolicy.MAX_PLAINTEXT_BYTES) {
+                "invalid device credential"
+            }
+            return checkNotNull(decode(plaintext)) { "invalid device credential" }
+        } finally {
+            plaintext.fill(0)
+        }
     }
 }

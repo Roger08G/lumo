@@ -34,6 +34,7 @@ impl From<LumoError> for CommandError {
             LumoError::NotFound(_) => "not_found",
             LumoError::InvalidInvitation => "invalid_invitation",
             LumoError::AuthenticationFailed => "authentication_failed",
+            LumoError::CredentialRejected => "credential_rejected",
             LumoError::ExpiredMessage => "expired_message",
             LumoError::ReplayDetected => "replay_detected",
             LumoError::RevisionConflict => "revision_conflict",

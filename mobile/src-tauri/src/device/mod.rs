@@ -89,7 +89,11 @@ impl DeviceBinding {
     }
 
     pub fn bind(&self, profile: RuntimeProfile) -> LumoResult<()> {
-        if let Some(current) = self.profile()? {
+        let mut bound = self
+            .profile
+            .lock()
+            .map_err(|_| LumoError::Storage("device binding lock poisoned".to_owned()))?;
+        if let Some(current) = *bound {
             return if current == profile {
                 Ok(())
             } else {
@@ -106,24 +110,21 @@ impl DeviceBinding {
         let encoded = serde_json::to_vec(&profile)
             .map_err(|error| LumoError::Serialization(error.to_string()))?;
         write_binding_atomically(&self.path, &encoded)?;
-        *self
-            .profile
-            .lock()
-            .map_err(|_| LumoError::Storage("device binding lock poisoned".to_owned()))? =
-            Some(profile);
+        *bound = Some(profile);
         Ok(())
     }
 
     pub fn clear(&self) -> LumoResult<()> {
+        let mut bound = self
+            .profile
+            .lock()
+            .map_err(|_| LumoError::Storage("device binding lock poisoned".to_owned()))?;
         match fs::remove_file(self.path.as_ref()) {
             Ok(()) => {}
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => return Err(storage_error(error)),
         }
-        *self
-            .profile
-            .lock()
-            .map_err(|_| LumoError::Storage("device binding lock poisoned".to_owned()))? = None;
+        *bound = None;
         Ok(())
     }
 }
