@@ -61,6 +61,9 @@ internal object LumoPreferences {
                 ),
         )
 
+    fun controlledTrackingConfigured(context: Context): Boolean =
+        preferences(context).getBoolean(KEY_CONTROLLED_TRACKING_CONFIGURED, false)
+
     fun recordControlledTrackingChoice(context: Context, enabled: Boolean) {
         preferences(context).edit(commit = true) {
             putBoolean(KEY_CONTROLLED_TRACKING_CONFIGURED, true)

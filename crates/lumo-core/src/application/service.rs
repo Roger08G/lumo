@@ -315,6 +315,19 @@ impl LumoService {
         if state.controlled.current_place_id.as_deref() == Some(id) {
             state.controlled.current_place_id = None;
         }
+        // A removed place cannot remain a candidate or the origin of a later trip.
+        if state
+            .controlled
+            .geofence_candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.place_id.as_deref() == Some(id))
+        {
+            state.controlled.geofence_candidate = None;
+        }
+        if state.controlled.departed_place_id.as_deref() == Some(id) {
+            state.controlled.departed_place_id = None;
+            state.controlled.departed_at_ms = None;
+        }
         add_event(
             state,
             EventKind::System,
@@ -544,18 +557,18 @@ impl LumoService {
             .iter()
             .filter(|command| command.status == CommandStatus::Queued)
             .count();
-        if state.controlled.last_location.is_some() {
-            complete_locate_commands(state, now_ms);
-        } else {
-            for command in state
-                .commands
-                .iter_mut()
-                .filter(|command| command.status == CommandStatus::Queued)
-            {
-                command.status = CommandStatus::Failed;
-                command.completed_at_ms = Some(now_ms);
-                command.error_code = Some("location_unavailable".to_owned());
-            }
+        if queued == 0 {
+            return Ok(0);
+        }
+        complete_locate_commands(state, now_ms);
+        for command in state
+            .commands
+            .iter_mut()
+            .filter(|command| command.status == CommandStatus::Queued)
+        {
+            command.status = CommandStatus::Failed;
+            command.completed_at_ms = Some(now_ms);
+            command.error_code = Some("location_unavailable".to_owned());
         }
         bump_revision(state);
         Ok(queued)
@@ -812,11 +825,13 @@ fn place_name(state: &RuntimeState, id: &str) -> String {
 }
 
 fn complete_locate_commands(state: &mut RuntimeState, now_ms: i64) {
-    for command in state
-        .commands
-        .iter_mut()
-        .filter(|command| command.status == CommandStatus::Queued)
-    {
+    let Some(location) = state.controlled.last_location.as_ref() else {
+        return;
+    };
+    let captured_at_ms = location.captured_at_ms;
+    for command in state.commands.iter_mut().filter(|command| {
+        command.status == CommandStatus::Queued && captured_at_ms >= command.created_at_ms
+    }) {
         command.status = CommandStatus::Completed;
         command.completed_at_ms = Some(now_ms);
         command.error_code = None;
@@ -1230,6 +1245,95 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(state.commands.len(), 1);
         assert_eq!(state.revision, revision);
+    }
+
+    #[test]
+    fn queued_offline_samples_do_not_complete_a_new_location_request() {
+        let service = LumoService;
+        let mut state = RuntimeState::default();
+        service
+            .create_group(&mut state, group_input(), 1)
+            .expect("group");
+        service
+            .set_tracking(
+                &mut state,
+                SetTrackingInput {
+                    precise_permission: PermissionState::Granted,
+                    background_permission: PermissionState::Granted,
+                    battery_optimization_disabled: true,
+                    enabled: true,
+                },
+                2,
+            )
+            .expect("tracking");
+        service.request_location(&mut state, 100).expect("request");
+        let sample = |captured_at_ms| ReportLocationInput {
+            latitude: 40.4168,
+            longitude: -3.7038,
+            accuracy_m: 8.0,
+            battery_percent: 80,
+            captured_at_ms: Some(captured_at_ms),
+        };
+        service
+            .report_location(&mut state, sample(50), 101)
+            .expect("queued sample");
+        assert_eq!(state.commands[0].status, CommandStatus::Queued);
+        service
+            .report_location(&mut state, sample(102), 103)
+            .expect("fresh sample");
+        assert_eq!(state.commands[0].status, CommandStatus::Completed);
+    }
+
+    #[test]
+    fn processing_old_location_reports_unavailable_and_empty_processing_is_a_noop() {
+        let service = LumoService;
+        let mut state = RuntimeState::default();
+        service
+            .create_group(&mut state, group_input(), 1)
+            .expect("group");
+        state.controlled.last_location = Some(LocationSample {
+            latitude: 40.4168,
+            longitude: -3.7038,
+            accuracy_m: 8.0,
+            captured_at_ms: 10,
+            battery_percent: 80,
+        });
+        service.request_location(&mut state, 100).expect("request");
+        assert_eq!(service.process_pending(&mut state, 101), Ok(1));
+        assert_eq!(state.commands[0].status, CommandStatus::Failed);
+        assert_eq!(
+            state.commands[0].error_code.as_deref(),
+            Some("location_unavailable")
+        );
+        let revision = state.revision;
+        assert_eq!(service.process_pending(&mut state, 102), Ok(0));
+        assert_eq!(state.revision, revision);
+    }
+
+    #[test]
+    fn deleting_a_place_clears_geofence_and_trip_references() {
+        let service = LumoService;
+        let mut state = RuntimeState::default();
+        service
+            .create_group(&mut state, group_input(), 1)
+            .expect("group");
+        let place = service
+            .create_place(&mut state, place_input("Casa", 40.4, -3.7), 2)
+            .expect("place");
+        state.controlled.current_place_id = Some(place.id.clone());
+        state.controlled.geofence_candidate = Some(GeofenceCandidate {
+            place_id: Some(place.id.clone()),
+            confirmations: 2,
+        });
+        state.controlled.departed_place_id = Some(place.id.clone());
+        state.controlled.departed_at_ms = Some(3);
+        service
+            .delete_place(&mut state, &place.id, "123456", 4)
+            .expect("delete");
+        assert!(state.controlled.current_place_id.is_none());
+        assert!(state.controlled.geofence_candidate.is_none());
+        assert!(state.controlled.departed_place_id.is_none());
+        assert!(state.controlled.departed_at_ms.is_none());
     }
 
     #[test]

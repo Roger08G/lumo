@@ -20,6 +20,8 @@ pub enum LumoError {
     InvalidInvitation,
     #[error("message authentication failed")]
     AuthenticationFailed,
+    #[error("device credential was rejected by the server")]
+    CredentialRejected,
     #[error("message has expired")]
     ExpiredMessage,
     #[error("message replay detected")]

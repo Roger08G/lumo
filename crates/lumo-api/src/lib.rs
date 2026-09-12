@@ -31,6 +31,8 @@ use storage::ApiStore;
 use uuid::Uuid;
 
 const MAX_API_REQUEST_BYTES: usize = 2_200_000;
+const MAX_CONTROL_REQUEST_BYTES: usize = 16 * 1_024;
+const MAX_PENDING_BOOTSTRAPS: usize = 32;
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -44,6 +46,7 @@ pub struct ApiState {
     /// 256 MiB production container. Rate limits are reserved while this
     /// permit is held and before Argon2 is invoked.
     pub bootstrap_hash_gate: Arc<tokio::sync::Semaphore>,
+    pub bootstrap_request_gate: Arc<tokio::sync::Semaphore>,
 }
 
 pub fn build_app(config: &ApiConfig) -> LumoResult<Router> {
@@ -61,10 +64,14 @@ pub fn build_app(config: &ApiConfig) -> LumoResult<Router> {
         limits: config.limits.clone(),
         trust_proxy_headers: config.trust_proxy_headers,
         bootstrap_hash_gate: Arc::new(tokio::sync::Semaphore::new(1)),
+        bootstrap_request_gate: Arc::new(tokio::sync::Semaphore::new(MAX_PENDING_BOOTSTRAPS)),
     };
     let mut router = Router::new()
         .route(lumo_protocol::HEALTH_PATH, get(health))
-        .route(lumo_protocol::GROUPS_PATH, post(create_group))
+        .route(
+            lumo_protocol::GROUPS_PATH,
+            post(create_group).layer(DefaultBodyLimit::max(MAX_CONTROL_REQUEST_BYTES)),
+        )
         .route("/v2/groups/{group_id}", delete(delete_group))
         .route(
             "/v2/groups/{group_id}/state/compact",
@@ -73,13 +80,17 @@ pub fn build_app(config: &ApiConfig) -> LumoResult<Router> {
         .route("/v2/groups/{group_id}/member", get(get_group_member))
         .route(
             "/v2/groups/{group_id}/member/operations",
-            post(apply_group_member_operation),
+            post(apply_group_member_operation)
+                .layer(DefaultBodyLimit::max(MAX_CONTROL_REQUEST_BYTES)),
         )
         .route("/v2/groups/{group_id}/verify-pin", post(verify_group_pin))
-        .route("/v2/groups/{group_id}/invitations", post(create_invitation))
+        .route(
+            "/v2/groups/{group_id}/invitations",
+            post(create_invitation).layer(DefaultBodyLimit::max(MAX_CONTROL_REQUEST_BYTES)),
+        )
         .route(
             "/v2/invitations/{invitation_id}/consume",
-            post(consume_invitation),
+            post(consume_invitation).layer(DefaultBodyLimit::max(MAX_CONTROL_REQUEST_BYTES)),
         )
         .route("/v2/groups/{group_id}/devices", get(list_devices))
         .route(

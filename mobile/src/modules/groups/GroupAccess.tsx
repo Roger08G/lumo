@@ -112,6 +112,7 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
     };
 
     const close = () => {
+        if (loading) return;
         setAction(null);
         resetFlow();
     };
@@ -123,6 +124,7 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
+        if (loading) return;
         setError("");
 
         if (action === "create") {
@@ -210,7 +212,7 @@ export default function GroupAccess({ onEnter }: GroupAccessProps) {
                 supervisorPhone: "",
                 trackedPersonName: scannedInvite.trackedPersonName || "Persona acompañada",
                 trackedPersonPhone: "",
-                role: "member",
+                role: scannedInvite.role === "controller" ? "supervisor" : "member",
                 entry: "joined",
                 invitationId: scannedInvite.invitationId,
                 inviteToken: scannedInvite.token,

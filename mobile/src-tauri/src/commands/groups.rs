@@ -29,17 +29,18 @@ pub async fn group_create(
     state: State<'_, BackendState>,
     input: CreateGroupInput,
 ) -> CommandResult<AppSnapshot> {
-    let backend = state.0.clone();
-    let binding = state.1.clone();
-    let mode = state.2;
-    let repository = state.3.clone();
-    let vault = state.4.clone();
-    let onboarding = state.5.clone();
-    let lifecycle = state.6.clone();
+    let backend = state.backend.clone();
+    let binding = state.binding.clone();
+    let mode = state.mode;
+    let repository = state.repository.clone();
+    let vault = state.vault.clone();
+    let onboarding = state.onboarding.clone();
+    let lifecycle = state.lifecycle.clone();
     run_blocking(move || {
         let _guard = lifecycle.lock().map_err(|_| {
             lumo_core::LumoError::Storage("group lifecycle lock poisoned".to_owned())
         })?;
+        crate::restore_remote_session(&app, &repository, &binding, &vault, &onboarding)?;
         if binding.profile()?.is_some() {
             return Err(lumo_core::LumoError::InvalidInput(
                 "this device is already paired".to_owned(),
@@ -55,23 +56,10 @@ pub async fn group_create(
         let pin = input.pin.clone();
         let request_id = onboarding.begin_create()?;
         let credential = repository.provision_group(&request_id, &pin, &input.supervisor_name)?;
-        let snapshot = match create_or_recover_remote_group(&backend, &repository, &input) {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                if repository.delete_remote_group(&pin).is_ok() {
-                    let _ = vault.clear(&app);
-                    let _ = onboarding.confirm_onboarding();
-                }
-                return Err(error.into());
-            }
-        };
-        if let Err(error) = vault.store(&app, &credential) {
-            if repository.delete_remote_group(&pin).is_ok() {
-                let _ = vault.clear(&app);
-                let _ = onboarding.confirm_onboarding();
-            }
-            return Err(error.into());
-        }
+        // Keep the request marker until both remote initialization and credential persistence
+        // complete. A retry recovers the same identity if a response or a local write fails.
+        let snapshot = create_or_recover_remote_group(&backend, &repository, &input)?;
+        vault.store(&app, &credential)?;
         binding.bind(RuntimeProfile::Controller)?;
         let _ = onboarding.confirm_onboarding();
         Ok(snapshot)
@@ -84,10 +72,10 @@ pub async fn group_verify_pin(
     state: State<'_, BackendState>,
     pin: String,
 ) -> CommandResult<VerifiedView> {
-    let backend = state.0.clone();
-    let mode = state.2;
-    let repository = state.3.clone();
-    state.1.require_bound()?;
+    let backend = state.backend.clone();
+    let mode = state.mode;
+    let repository = state.repository.clone();
+    state.binding.require_bound()?;
     run_blocking(move || {
         if mode == lumo_runtime::RuntimeMode::Remote {
             repository.verify_remote_pin(&pin)?;
@@ -104,18 +92,20 @@ pub async fn group_create_invitation(
     state: State<'_, BackendState>,
     pin: String,
     role: DeviceRole,
+    replace_device_id: Option<String>,
 ) -> CommandResult<InvitationView> {
-    let backend = state.0.clone();
-    let mode = state.2;
-    let repository = state.3.clone();
-    state.1.require_controller()?;
+    let backend = state.backend.clone();
+    let mode = state.mode;
+    let repository = state.repository.clone();
+    state.binding.require_controller()?;
     run_blocking(move || {
         if mode == lumo_runtime::RuntimeMode::Local {
             let mut invitation = backend.create_invitation(&pin)?;
             invitation.role = role.as_str().to_owned();
             return Ok(invitation);
         }
-        let invitation = repository.create_remote_invitation(&pin, role)?;
+        let invitation =
+            repository.create_remote_invitation(&pin, role, replace_device_id.as_deref())?;
         let session = backend
             .snapshot(RuntimeProfile::Controller)?
             .session
@@ -140,17 +130,18 @@ pub async fn group_consume_invitation(
     token: String,
     pin: String,
 ) -> CommandResult<JoinedView> {
-    let backend = state.0.clone();
-    let binding = state.1.clone();
-    let mode = state.2;
-    let repository = state.3.clone();
-    let vault = state.4.clone();
-    let onboarding = state.5.clone();
-    let lifecycle = state.6.clone();
+    let backend = state.backend.clone();
+    let binding = state.binding.clone();
+    let mode = state.mode;
+    let repository = state.repository.clone();
+    let vault = state.vault.clone();
+    let onboarding = state.onboarding.clone();
+    let lifecycle = state.lifecycle.clone();
     run_blocking(move || {
         let _guard = lifecycle.lock().map_err(|_| {
             lumo_core::LumoError::Storage("group lifecycle lock poisoned".to_owned())
         })?;
+        crate::restore_remote_session(&app, &repository, &binding, &vault, &onboarding)?;
         if binding.profile()?.is_some() {
             return Err(lumo_core::LumoError::InvalidInput(
                 "this device is already paired".to_owned(),
@@ -177,20 +168,10 @@ pub async fn group_consume_invitation(
             DeviceRole::Controller => (RuntimeProfile::Controller, DeviceRole::Controller),
             DeviceRole::Controlled => (RuntimeProfile::Controlled, DeviceRole::Controlled),
         };
-        if let Err(error) = backend.snapshot(profile) {
-            if repository.leave_remote_group(&pin).is_ok() {
-                let _ = vault.clear(&app);
-                let _ = onboarding.confirm_onboarding();
-            }
-            return Err(error.into());
-        }
-        if let Err(error) = vault.store(&app, &credential) {
-            if repository.leave_remote_group(&pin).is_ok() {
-                let _ = vault.clear(&app);
-                let _ = onboarding.confirm_onboarding();
-            }
-            return Err(error.into());
-        }
+        // Consuming a replacement invitation already revokes the previous device. Persist the
+        // replacement before another network request; a transient snapshot failure must never
+        // revoke the newly paired phone and strand both devices.
+        vault.store(&app, &credential)?;
         binding.bind(profile)?;
         let _ = onboarding.confirm_onboarding();
         Ok(JoinedView {
@@ -207,13 +188,13 @@ pub async fn group_leave(
     state: State<'_, BackendState>,
     pin: String,
 ) -> CommandResult<VerifiedView> {
-    let backend = state.0.clone();
-    let binding = state.1.clone();
-    let mode = state.2;
-    let repository = state.3.clone();
-    let vault = state.4.clone();
-    let onboarding = state.5.clone();
-    let lifecycle = state.6.clone();
+    let backend = state.backend.clone();
+    let binding = state.binding.clone();
+    let mode = state.mode;
+    let repository = state.repository.clone();
+    let vault = state.vault.clone();
+    let onboarding = state.onboarding.clone();
+    let lifecycle = state.lifecycle.clone();
     run_blocking(move || {
         let _guard = lifecycle.lock().map_err(|_| {
             lumo_core::LumoError::Storage("group lifecycle lock poisoned".to_owned())
@@ -283,8 +264,8 @@ fn create_or_recover_remote_group(
 pub async fn group_list_devices(
     state: State<'_, BackendState>,
 ) -> CommandResult<Vec<DeviceSummary>> {
-    state.1.require_controller()?;
-    let repository = state.3.clone();
+    state.binding.require_controller()?;
+    let repository = state.repository.clone();
     run_blocking(move || repository.list_remote_devices().map_err(Into::into)).await
 }
 
@@ -294,8 +275,8 @@ pub async fn group_revoke_device(
     device_id: String,
     pin: String,
 ) -> CommandResult<VerifiedView> {
-    state.1.require_controller()?;
-    let repository = state.3.clone();
+    state.binding.require_controller()?;
+    let repository = state.repository.clone();
     run_blocking(move || {
         repository.revoke_remote_device(&device_id, &pin)?;
         Ok(VerifiedView { verified: true })

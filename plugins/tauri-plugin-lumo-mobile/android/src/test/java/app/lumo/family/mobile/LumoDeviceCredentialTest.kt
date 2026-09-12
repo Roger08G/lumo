@@ -57,15 +57,21 @@ class LumoDeviceCredentialTest {
 
     @Test
     fun onlyStructuredCredentialErrorsDisableBackgroundTracking() {
-        listOf("authentication_failed", "credential_invalid", "credential_revoked").forEach {
+        listOf("credential_rejected", "credential_revoked").forEach {
             errorCode ->
             assertEquals(
                 LumoBackgroundResultKind.CREDENTIAL_REJECTED,
                 LumoBackgroundErrorPolicy.classify(errorCode, hasError = true),
             )
         }
-        listOf(null, "timeout", "remote_server_error", "service_unavailable").forEach {
-            errorCode ->
+        listOf(
+            null,
+            "authentication_failed",
+            "credential_invalid",
+            "timeout",
+            "remote_server_error",
+            "service_unavailable",
+        ).forEach { errorCode ->
             assertEquals(
                 LumoBackgroundResultKind.TRANSIENT_FAILURE,
                 LumoBackgroundErrorPolicy.classify(errorCode, hasError = true),
@@ -79,6 +85,43 @@ class LumoDeviceCredentialTest {
             LumoBackgroundResultKind.SUCCESS,
             LumoBackgroundErrorPolicy.classify(errorCode = null, hasError = false),
         )
+    }
+
+    @Test
+    fun temporaryKeyFailurePreservesTheEnvelopeForTheNextRead() {
+        val key = SecretKeySpec(ByteArray(32) { index -> (index + 1).toByte() }, "AES")
+        val envelope = LumoCredentialCipher.encrypt("saved credential".toByteArray(), key)
+        var unavailable = true
+        val decrypt: (String) -> ByteArray = {
+            if (unavailable) throw java.security.KeyStoreException("provider unavailable")
+            LumoCredentialCipher.decrypt(it, key)
+        }
+        assertThrows(java.security.KeyStoreException::class.java) {
+            LumoCredentialReader.read(envelope, decrypt) { credential() }
+        }
+        unavailable = false
+        val restored = LumoCredentialReader.read(envelope, decrypt) { credential() }
+        assertEquals(credential().deviceId, restored?.deviceId)
+    }
+
+    @Test
+    fun invalidCredentialReadFailsWithoutBecomingAnUnpairedDeviceAndZeroesPlaintext() {
+        val plaintext = "invalid credential".toByteArray()
+        assertThrows(IllegalStateException::class.java) {
+            LumoCredentialReader.read("saved envelope", { plaintext }) { null }
+        }
+        assertTrue(plaintext.all { it == 0.toByte() })
+        var decryptCalled = false
+        val missing = LumoCredentialReader.read(
+            envelope = null,
+            decrypt = {
+                decryptCalled = true
+                byteArrayOf()
+            },
+            decode = { credential() },
+        )
+        assertEquals(null, missing)
+        assertFalse(decryptCalled)
     }
 
     @Test

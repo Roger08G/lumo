@@ -7,6 +7,7 @@ import android.util.Base64
 import androidx.core.content.edit
 import java.security.KeyStore
 import javax.crypto.Cipher
+import javax.crypto.AEADBadTagException
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
@@ -16,10 +17,16 @@ import org.json.JSONObject
 internal class LumoSecureQueue(private val context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES_FILE, Context.MODE_PRIVATE)
 
-    @Synchronized
-    fun read(): List<String> {
+    fun read(): List<String> = synchronized(lock) { readLocked() }
+
+    private fun readLocked(): List<String> {
         val encrypted = preferences.getString(KEY_QUEUE, null) ?: return emptyList()
+        if (encrypted.length > MAX_QUEUE_CHARS) {
+            preferences.edit(commit = true) { remove(KEY_QUEUE) }
+            return emptyList()
+        }
         val plaintext = runCatching { decrypt(encrypted) }.getOrElse {
+            if (it !is AEADBadTagException && it !is IllegalArgumentException) throw it
             preferences.edit(commit = true) { remove(KEY_QUEUE) }
             return emptyList()
         }
@@ -38,13 +45,13 @@ internal class LumoSecureQueue(private val context: Context) {
         return retained
     }
 
-    @Synchronized
-    fun enqueue(payload: String) {
-        replace(read() + payload)
+    fun enqueue(payload: String) = synchronized(lock) {
+        replaceLocked(readLocked() + payload)
     }
 
-    @Synchronized
-    fun replace(payloads: List<String>) {
+    fun replace(payloads: List<String>) = synchronized(lock) { replaceLocked(payloads) }
+
+    private fun replaceLocked(payloads: List<String>) {
         if (payloads.isEmpty()) {
             preferences.edit(commit = true) { remove(KEY_QUEUE) }
             return
@@ -75,7 +82,7 @@ internal class LumoSecureQueue(private val context: Context) {
 
     private fun encrypt(value: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, key())
+        cipher.init(Cipher.ENCRYPT_MODE, key(create = true))
         val ciphertext = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
         return listOf(cipher.iv, ciphertext)
             .joinToString(SEPARATOR) { Base64.encodeToString(it, Base64.NO_WRAP) }
@@ -87,13 +94,14 @@ internal class LumoSecureQueue(private val context: Context) {
         val iv = Base64.decode(parts[0], Base64.NO_WRAP)
         val ciphertext = Base64.decode(parts[1], Base64.NO_WRAP)
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, iv))
+        cipher.init(Cipher.DECRYPT_MODE, key(create = false), GCMParameterSpec(128, iv))
         return cipher.doFinal(ciphertext).toString(Charsets.UTF_8)
     }
 
-    private fun key(): SecretKey {
+    private fun key(create: Boolean): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
         (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        check(create) { "location queue key is temporarily unavailable" }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEY_STORE)
         generator.init(
             KeyGenParameterSpec.Builder(
@@ -108,6 +116,7 @@ internal class LumoSecureQueue(private val context: Context) {
     }
 
     private companion object {
+        val lock = Any()
         const val PREFERENCES_FILE = "lumo_secure_location_queue"
         const val KEY_QUEUE = "pending_ticks"
         const val KEY_ALIAS = "lumo.location.queue.v1"
@@ -115,5 +124,6 @@ internal class LumoSecureQueue(private val context: Context) {
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val SEPARATOR = "."
         const val MAX_PAYLOAD_CHARS = 2_048
+        const val MAX_QUEUE_CHARS = 2 * 1024 * 1024
     }
 }

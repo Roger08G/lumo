@@ -27,8 +27,8 @@ pub async fn tracker_set_tracking(
     state: State<'_, BackendState>,
     input: SetTrackingInput,
 ) -> CommandResult<AppSnapshot> {
-    let backend = state.0.clone();
-    state.1.require_controlled()?;
+    let backend = state.backend.clone();
+    state.binding.require_controlled()?;
     run_blocking(move || backend.set_tracking(input).map_err(Into::into)).await
 }
 
@@ -37,8 +37,8 @@ pub async fn tracker_report_location(
     state: State<'_, BackendState>,
     input: ReportLocationInput,
 ) -> CommandResult<AppSnapshot> {
-    let backend = state.0.clone();
-    state.1.require_controlled()?;
+    let backend = state.backend.clone();
+    state.binding.require_controlled()?;
     run_blocking(move || backend.report_location(input).map_err(Into::into)).await
 }
 
@@ -46,8 +46,8 @@ pub async fn tracker_report_location(
 pub async fn tracker_process_pending(
     state: State<'_, BackendState>,
 ) -> CommandResult<ProcessedView> {
-    let backend = state.0.clone();
-    state.1.require_controlled()?;
+    let backend = state.backend.clone();
+    state.binding.require_controlled()?;
     run_blocking(move || {
         Ok(ProcessedView {
             processed: backend.process_pending()?,
@@ -58,8 +58,8 @@ pub async fn tracker_process_pending(
 
 #[tauri::command]
 pub async fn tracker_send_help(state: State<'_, BackendState>) -> CommandResult<AppSnapshot> {
-    let backend = state.0.clone();
-    state.1.require_controlled()?;
+    let backend = state.backend.clone();
+    state.binding.require_controlled()?;
     run_blocking(move || backend.send_help().map_err(Into::into)).await
 }
 
@@ -67,8 +67,8 @@ pub async fn tracker_send_help(state: State<'_, BackendState>) -> CommandResult<
 pub async fn controller_request_location(
     state: State<'_, BackendState>,
 ) -> CommandResult<CommandAccepted> {
-    let backend = state.0.clone();
-    state.1.require_controller()?;
+    let backend = state.backend.clone();
+    state.binding.require_controller()?;
     run_blocking(move || {
         Ok(CommandAccepted {
             command_id: backend.request_location()?,
@@ -80,7 +80,7 @@ pub async fn controller_request_location(
 
 #[tauri::command]
 pub async fn events_mark_read(state: State<'_, BackendState>) -> CommandResult<AppSnapshot> {
-    let backend = state.0.clone();
-    state.1.require_controller()?;
+    let backend = state.backend.clone();
+    state.binding.require_controller()?;
     run_blocking(move || backend.mark_events_read().map_err(Into::into)).await
 }

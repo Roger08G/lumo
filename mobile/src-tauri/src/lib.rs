@@ -3,12 +3,11 @@ mod device;
 mod mobile;
 mod state;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{atomic::AtomicBool, Arc, Mutex};
 
 use lumo_core::domain::RuntimeProfile;
 use lumo_runtime::{
-    ConfiguredRepository, DeviceCredential, DeviceRole, LocalBackend, RuntimeConfig, RuntimeMode,
-    SystemClock,
+    ConfiguredRepository, DeviceCredential, DeviceRole, LocalBackend, RuntimeConfig, SystemClock,
 };
 use tauri::Manager;
 
@@ -36,49 +35,23 @@ pub fn run() {
             let binding = DeviceBinding::open(data_dir.join("device-binding.json"))?;
             let vault = DeviceCredentialVault::new(data_dir.join("device-credential.json"));
             let onboarding = PendingOnboardingStore::new(data_dir.join("pending-onboarding.json"));
-            if config.mode == RuntimeMode::Remote {
-                if onboarding.is_leave_pending()? {
-                    let _ = repository.clear_credential();
-                    binding.clear()?;
-                    if vault.clear(app.handle()).is_ok() {
-                        onboarding.confirm_onboarding()?;
-                    }
-                } else {
-                    let api_origin = config.api_url.as_deref().ok_or_else(|| {
-                        lumo_core::LumoError::Configuration("LUMO_API_URL is required".to_owned())
-                    })?;
-                    let credential = match vault.load(app.handle(), api_origin) {
-                        Ok(credential) => credential,
-                        Err(_) => {
-                            let _ = repository.clear_credential();
-                            let _ = vault.clear(app.handle());
-                            binding.clear()?;
-                            None
-                        }
-                    };
-                    reconcile_startup_credential(
-                        app.handle(),
-                        &repository,
-                        &binding,
-                        &vault,
-                        &onboarding,
-                        credential,
-                    )?;
-                }
-            }
-            app.manage(BackendState(
-                LocalBackend::new(repository.clone(), SystemClock),
+            // Restore in app_bootstrap's blocking task. Keystore access can temporarily fail;
+            // the UI must be able to retry it without deleting the pairing or aborting startup.
+            app.manage(BackendState {
+                backend: LocalBackend::new(repository.clone(), SystemClock),
                 binding,
-                config.mode,
+                mode: config.mode,
                 repository,
                 vault,
                 onboarding,
-                Arc::new(Mutex::new(())),
-            ));
+                lifecycle: Arc::new(Mutex::new(())),
+                restore_failed: Arc::new(AtomicBool::new(false)),
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::app::app_bootstrap,
+            commands::app::app_reset_local_session,
             commands::groups::group_create,
             commands::groups::group_verify_pin,
             commands::groups::group_create_invitation,
@@ -111,27 +84,41 @@ pub fn run() {
         .expect("error while running Lumo");
 }
 
-fn reconcile_startup_credential<R: tauri::Runtime>(
+pub(crate) fn restore_remote_session<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     repository: &ConfiguredRepository,
     binding: &DeviceBinding,
     vault: &DeviceCredentialVault,
     onboarding: &PendingOnboardingStore,
-    credential: Option<DeviceCredential>,
 ) -> lumo_core::LumoResult<()> {
+    let ConfiguredRepository::Remote(remote) = repository else {
+        return Ok(());
+    };
+    if onboarding.is_leave_pending()? {
+        vault.clear(app)?;
+        repository.clear_credential()?;
+        binding.clear()?;
+        return onboarding.confirm_onboarding();
+    }
+    if remote.credential()?.is_some() && binding.profile()?.is_some() {
+        return Ok(());
+    }
+    let credential = vault.load(app, remote.api_origin())?;
     let bound = binding.profile()?;
     let action = startup_reconciliation(bound, credential.as_ref().map(DeviceCredential::role));
     match action {
         StartupReconciliation::Unbound => Ok(()),
         StartupReconciliation::Clear => {
-            let _ = repository.clear_credential();
-            let _ = vault.clear(app);
+            repository.clear_credential()?;
             binding.clear()
         }
         StartupReconciliation::RecoverBinding(profile) => {
             repository.install_credential(
                 credential.ok_or(lumo_core::LumoError::AuthenticationFailed)?,
             )?;
+            if binding.profile()?.is_some_and(|bound| bound != profile) {
+                binding.clear()?;
+            }
             binding.bind(profile)?;
             onboarding.confirm_onboarding()
         }
@@ -163,7 +150,7 @@ fn startup_reconciliation(
         (Some(bound), Some(role)) if bound == profile_for_role(role) => {
             StartupReconciliation::Install
         }
-        (Some(_), Some(_)) => StartupReconciliation::Clear,
+        (Some(_), Some(role)) => StartupReconciliation::RecoverBinding(profile_for_role(role)),
     }
 }
 
@@ -197,7 +184,7 @@ mod tests {
                 Some(RuntimeProfile::Controller),
                 Some(DeviceRole::Controlled)
             ),
-            StartupReconciliation::Clear
+            StartupReconciliation::RecoverBinding(RuntimeProfile::Controlled)
         );
     }
 }

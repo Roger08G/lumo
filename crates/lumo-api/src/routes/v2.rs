@@ -67,7 +67,11 @@ pub async fn create_group(
     // complete replay/reservation/hash/commit sequence so repeated requestIds
     // neither consume quota twice nor multiply Argon2 memory on the 256 MiB
     // production container.
-    let _hash_permit = match state.bootstrap_hash_gate.clone().acquire_owned().await {
+    let request_permit = match state.bootstrap_request_gate.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => return api_error(LumoError::RateLimited),
+    };
+    let hash_permit = match state.bootstrap_hash_gate.clone().acquire_owned().await {
         Ok(permit) => permit,
         Err(_) => return api_error(LumoError::RateLimited),
     };
@@ -152,6 +156,10 @@ pub async fn create_group(
     };
     let request_id = request.request_id;
     let result = run_blocking(move || {
+        // spawn_blocking continues when the HTTP client disconnects. Keep both
+        // permits inside the task so cancellation cannot multiply Argon2 work.
+        let _hash_permit = hash_permit;
+        let _request_permit = request_permit;
         let mut new_group = new_group;
         new_group.pin_hash = master.hash_group_pin(&new_group.id, &pin)?;
         store.create_group_idempotent_v2(
@@ -188,7 +196,7 @@ pub async fn get_group_state(
     }
     let store = state.store.clone();
     let state_group_id = group_id.clone();
-    match run_blocking(move || store.load_state_v2(&state_group_id)).await {
+    match run_blocking(move || store.load_state_v2(&state_group_id, &actor.device_id)).await {
         Ok(Some(record)) => {
             let etag = state_etag(&group_id, &record);
             if is_not_modified(&headers, &etag) {
@@ -231,6 +239,7 @@ pub async fn put_group_state(
     let result = run_blocking(move || {
         store.compare_and_swap_v2(
             &group_id,
+            &actor.device_id,
             request.expected_revision,
             &request.record,
             now_ms,
@@ -262,6 +271,15 @@ pub async fn create_invitation(
         Ok(request) => request,
         Err(error) => return invalid_body(error),
     };
+    if request
+        .replace_device_id
+        .as_ref()
+        .is_some_and(|device_id| Uuid::parse_str(device_id).is_err())
+    {
+        return api_error(LumoError::InvalidInput(
+            "replaceDeviceId must be a UUID".to_owned(),
+        ));
+    }
     if let Err(error) = validate_pin(&request.pin) {
         return api_error(error);
     }
@@ -280,6 +298,7 @@ pub async fn create_invitation(
         pin: zeroize::Zeroizing::new(request.pin),
         token_hash,
         role: request.role,
+        replace_device_id: request.replace_device_id,
         created_at_ms: now_ms,
     };
     let result =
@@ -493,7 +512,7 @@ pub async fn list_devices(
         return api_error(LumoError::Unauthorized);
     }
     let store = state.store.clone();
-    match run_blocking(move || store.list_devices_v2(&group_id)).await {
+    match run_blocking(move || store.list_devices_v2(&group_id, &actor.device_id)).await {
         Ok(devices) => Json(DeviceListResponse { devices }).into_response(),
         Err(error) => api_error(error),
     }

@@ -2,6 +2,11 @@ $ErrorActionPreference = "Stop"
 
 $cargoScript = Join-Path $PSScriptRoot "cargo-lumo.ps1"
 $projectRoot = Split-Path -Parent $PSScriptRoot
+Set-Location -LiteralPath $projectRoot
+
+if ([string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR)) {
+    $env:CARGO_TARGET_DIR = Join-Path $projectRoot "target"
+}
 
 $clientSecretReferences = & rg -n "LUMO_(API_PASSWORD|SERVER_MASTER_KEY)" `
     (Join-Path $projectRoot "mobile/src-tauri/build.rs") `
@@ -34,7 +39,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $cargoScript build -p lumo-api --release --locked
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$binaryDirectory = "C:\.android\lumo-target\release"
+$binaryDirectory = Join-Path $env:CARGO_TARGET_DIR "release"
 foreach ($binary in @("lumo-controller", "lumo-controlled", "lumo-debug")) {
     & (Join-Path $binaryDirectory "$binary.exe") self-test
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
