@@ -1,10 +1,7 @@
 use std::fmt;
 
 use argon2::{
-    password_hash::{
-        rand_core::OsRng as PasswordOsRng, PasswordHash, PasswordHasher, PasswordVerifier,
-        SaltString,
-    },
+    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Algorithm, Argon2, Params, Version,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -96,9 +93,8 @@ impl MasterKey {
     pub fn hash_group_pin(&self, group_id: &str, pin: &str) -> LumoResult<String> {
         lumo_core::security::validate_pin(pin)?;
         let material = self.group_pin_material(group_id, pin);
-        let salt = SaltString::generate(&mut PasswordOsRng);
         pin_argon2()?
-            .hash_password(&material, &salt)
+            .hash_password(&material)
             .map(|hash| hash.to_string())
             .map_err(|error| LumoError::Configuration(error.to_string()))
     }
@@ -435,5 +431,22 @@ mod tests {
         assert!(!master.verify_group_pin("group-b", "123456", &encoded));
         assert!(!other.verify_group_pin("group-a", "123456", &encoded));
         assert!(!lumo_core::security::verify_pin("123456", &encoded));
+    }
+
+    #[test]
+    fn argon2_05_group_pin_remains_bound_to_its_original_pepper_and_group() {
+        // Generated with argon2 0.5.3 and the existing test master/group/PIN below,
+        // b"lumo-test-salt-05", Argon2id v19, m=19456,t=2,p=1. No production data.
+        const LEGACY_PHC: &str = concat!(
+            "$argon2id$v=19$m=19456,t=2,p=1$bHVtby10ZXN0LXNhbHQtMDU$",
+            "ZSidjQnz9AjnoUYSld2sDS/FIPGe3Xy99zthyTdc778"
+        );
+        let master = MasterKey::new("test-master-key-with-at-least-32-bytes").expect("master");
+        let other = MasterKey::new("other-master-key-with-at-least-32-byte").expect("master");
+        assert!(master.verify_group_pin("group-a", "123456", LEGACY_PHC));
+        assert!(!master.verify_group_pin("group-a", "654321", LEGACY_PHC));
+        assert!(!master.verify_group_pin("group-b", "123456", LEGACY_PHC));
+        assert!(!other.verify_group_pin("group-a", "123456", LEGACY_PHC));
+        assert!(!lumo_core::security::verify_pin("123456", LEGACY_PHC));
     }
 }

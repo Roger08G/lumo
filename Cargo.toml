@@ -17,7 +17,7 @@ license = "MIT"
 authors = ["Lumo contributors"]
 
 [workspace.dependencies]
-argon2 = "0.5.3"
+argon2 = "0.6.0"
 axum = "0.8.6"
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 base64 = "0.23.1"
